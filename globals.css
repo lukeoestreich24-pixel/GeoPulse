@@ -1,0 +1,42 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Fix Leaflet marker icons (broken in Webpack) */
+.leaflet-default-icon-path {
+  background-image: url(https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png);
+}
+
+/* Hide Leaflet attribution for cleaner look (optional) */
+.leaflet-control-attribution {
+  background: rgba(15, 17, 23, 0.8) !important;
+  color: #6b7280 !important;
+  font-size: 10px !important;
+}
+
+.leaflet-control-attribution a {
+  color: #6b7280 !important;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: #0f1117;
+}
+::-webkit-scrollbar-thumb {
+  background: #1e2533;
+  border-radius: 2px;
+}
+
+/* Sidebar slide animation */
+.sidebar-enter {
+  transform: translateX(100%);
+  opacity: 0;
+}
+.sidebar-enter-active {
+  transform: translateX(0);
+  opacity: 1;
+  transition: transform 300ms ease, opacity 300ms ease;
+}
