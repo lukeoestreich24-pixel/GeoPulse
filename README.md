@@ -1,6 +1,6 @@
 # GeoPulse 🌍
 
-> Real-time global geopolitical risk tracker — powered by GDELT, Next.js 14, and Supabase.
+> Real-time global geopolitical risk tracker — powered by GDELT, Next.js 14, and Supabase!
 
 GeoPulse displays a live heatmap of geopolitical risk by country. It fetches data from the [GDELT Project](https://www.gdeltproject.org/) every hour, calculates risk scores, and shows them on an interactive map with per-country event breakdowns.
 
