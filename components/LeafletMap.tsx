@@ -79,12 +79,12 @@ export default function LeafletMapComponent({
       const map = mapRef.current!;
 
       // Remove old markers not in new data
-      for (const [code, marker] of markersRef.current.entries()) {
+      Array.from(markersRef.current.entries()).forEach(([code, marker]) => {
         if (!countries.find((c) => c.country_code === code)) {
           marker.remove();
           markersRef.current.delete(code);
         }
-      }
+      });
 
       // Add / update markers
       for (const country of countries) {
@@ -135,16 +135,16 @@ export default function LeafletMapComponent({
   useEffect(() => {
     if (!mapRef.current) return;
     import("leaflet").then(() => {
-      for (const [code, marker] of markersRef.current.entries()) {
+      Array.from(markersRef.current.entries()).forEach(([code, marker]) => {
         const country = countries.find((c) => c.country_code === code);
-        if (!country) continue;
+        if (!country) return;
         const isSelected = selectedCountry?.country_code === code;
         marker.setStyle({
           weight: isSelected ? 3 : 1.5,
           opacity: isSelected ? 1 : 0.9,
           fillOpacity: isSelected ? 0.8 : 0.5,
         });
-      }
+      });
     });
   }, [selectedCountry, countries]);
 
