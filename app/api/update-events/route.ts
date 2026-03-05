@@ -4,7 +4,9 @@ import { fetchLatestGdeltEvents, calculateRiskScore } from "@/lib/gdelt";
 import { getCountryInfo } from "@/lib/countries";
 
 // Vercel Cron calls this with an Authorization header containing CRON_SECRET
-export async function GET(req: NextRequest) 
+export async function GET(req: NextRequest) {
+
+
   const supabase = createAdminClient();
   const results = { inserted: 0, skipped: 0, errors: 0, countriesUpdated: 0 };
 
