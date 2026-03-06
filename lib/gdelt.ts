@@ -49,6 +49,14 @@ export async function fetchLatestGdeltEvents(): Promise<RawGdeltEvent[]> {
   const buffer = Buffer.from(arrayBuffer);
   const csvText = extractZip(buffer);
 
+  // Debug: log first line to check column structure
+  const firstLines = csvText.split("\n").slice(0, 2);
+  console.log("CSV first line col count:", firstLines[0]?.split("\t").length);
+  console.log("CSV sample eventcode:", firstLines[0]?.split("\t")[26]);
+  console.log("CSV sample goldstein:", firstLines[0]?.split("\t")[30]);
+  console.log("CSV sample country:", firstLines[0]?.split("\t")[51]);
+  console.log("CSV total lines:", csvText.split("\n").length);
+
   return parseGdeltCsv(csvText);
 }
 
