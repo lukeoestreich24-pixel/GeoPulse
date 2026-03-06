@@ -65,20 +65,21 @@ export async function fetchLatestGdeltEvents(): Promise<RawGdeltEvent[]> {
     throw new Error(`Failed to fetch GDELT CSV: ${zipRes.status}`);
   }
 
-  // Parse zipped CSV in memory using Node zlib
+  // Parse zipped CSV in memory using adm-zip
   const arrayBuffer = await zipRes.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
-  const csvText = await decompressGzip(buffer);
+  const csvText = extractZip(buffer);
 
   return parseGdeltCsv(csvText);
 }
 
-async function decompressGzip(buffer: Buffer): Promise<string> {
-  const zlib = await import("zlib");
-  const { promisify } = await import("util");
-  const gunzip = promisify(zlib.gunzip);
-  const result = await gunzip(buffer);
-  return result.toString("utf-8");
+function extractZip(buffer: Buffer): string {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const AdmZip = require("adm-zip");
+  const zip = new AdmZip(buffer);
+  const entries = zip.getEntries();
+  if (entries.length === 0) throw new Error("Empty zip file");
+  return zip.readAsText(entries[0]);
 }
 
 // GDELT 2.0 event CSV columns (tab-separated, 61 columns)
