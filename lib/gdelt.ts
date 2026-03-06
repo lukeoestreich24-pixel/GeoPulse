@@ -74,12 +74,10 @@ export async function fetchLatestGdeltEvents(): Promise<RawGdeltEvent[]> {
 }
 
 async function decompressGzip(buffer: ArrayBuffer): Promise<Uint8Array> {
-  const ds = new DecompressionStream("deflate-raw");
-  const writer = ds.writable.getWriter();
-  const reader = ds.readable.getReader();
-
-  writer.write(new Uint8Array(buffer));
-  writer.close();
+  const ds = new DecompressionStream("gzip");
+  const blob = new Blob([buffer]);
+  const stream = blob.stream().pipeThrough(ds);
+  const reader = stream.getReader();
 
   const chunks: Uint8Array[] = [];
   let done = false;
