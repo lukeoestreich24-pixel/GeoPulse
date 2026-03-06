@@ -13,17 +13,10 @@ export interface RawGdeltEvent {
 
 // GDELT GKG / CSV feed uses tab-separated values
 // We use the GDELT 2.0 events CSV (15-minute updates)
-export async function fetchLatestGdeltEvents(): Promise<RawGdeltEvent[]> {
-  // GDELT publishes a master CSV feed updated every 15 min
-  // We fetch the latest file list from the GDELT 2.0 last update
-  const lastUpdateUrl =
-    "http://data.gdeltproject.org/gdeltv2/lastupdate.txt";
+export async function fetchLatestGdeltEvents(): Promise<{ events: RawGdeltEvent[], debug: string }> {
+  const lastUpdateUrl = "http://data.gdeltproject.org/gdeltv2/lastupdate.txt";
 
-  const listRes = await fetch(lastUpdateUrl, {
-    next: { revalidate: 0 },
-    cache: "no-store",
-  });
-
+  const listRes = await fetch(lastUpdateUrl, { cache: "no-store" });
   if (!listRes.ok) {
     throw new Error(`Failed to fetch GDELT update list: ${listRes.status}`);
   }
@@ -31,33 +24,35 @@ export async function fetchLatestGdeltEvents(): Promise<RawGdeltEvent[]> {
   const listText = await listRes.text();
   const lines = listText.trim().split("\n");
 
-  // Find the export (events) CSV zip URL
   const exportLine = lines.find((l) => l.includes(".export.CSV.zip"));
   if (!exportLine) throw new Error("Could not find GDELT export CSV URL");
 
-  // URL is the third field
   const csvZipUrl = exportLine.trim().split(" ")[2];
 
-  // Fetch the zip
   const zipRes = await fetch(csvZipUrl, { cache: "no-store" });
   if (!zipRes.ok) {
     throw new Error(`Failed to fetch GDELT CSV: ${zipRes.status}`);
   }
 
-  // Parse zipped CSV in memory using adm-zip
   const arrayBuffer = await zipRes.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
   const csvText = extractZip(buffer);
 
-  // Debug: log first line to check column structure
-  const firstLines = csvText.split("\n").slice(0, 2);
-  console.log("CSV first line col count:", firstLines[0]?.split("\t").length);
-  console.log("CSV sample eventcode:", firstLines[0]?.split("\t")[26]);
-  console.log("CSV sample goldstein:", firstLines[0]?.split("\t")[30]);
-  console.log("CSV sample country:", firstLines[0]?.split("\t")[51]);
-  console.log("CSV total lines:", csvText.split("\n").length);
+  const csvLines = csvText.split("\n");
+  const firstLine = csvLines[0] || "";
+  const firstCols = firstLine.split("\t");
 
-  return parseGdeltCsv(csvText);
+  const debug = JSON.stringify({
+    totalLines: csvLines.length,
+    colCount: firstCols.length,
+    col26: firstCols[26],
+    col30: firstCols[30],
+    col51: firstCols[51],
+    csvUrl: csvZipUrl,
+  });
+
+  const events = parseGdeltCsv(csvText);
+  return { events, debug };
 }
 
 function extractZip(buffer: Buffer): string {
