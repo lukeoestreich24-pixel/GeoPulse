@@ -1,26 +1,5 @@
-// GDELT Event Codes we care about (military, conflict, sanctions, protest)
-const RELEVANT_EVENT_CODES = [
-  "19",  // Appeal for military force
-  "20",  // Use unconventional mass violence
-  "193", // Fight with small arms and light weapons
-  "194", // Fight with artillery and tanks
-  "195", // Employ aerial weapons
-  "196", // Violate ceasefire
-  "14",  // Protest
-  "141", // Demonstrate or rally
-  "142", // Conduct hunger strike
-  "143", // Conduct strike or boycott
-  "145", // Protest violently
-  "17",  // Impose sanctions
-  "171", // Impose embargo
-  "172", // Impose blockade
-  "18",  // Threaten
-  "180", // Threaten
-  "181", // Threaten non-force
-  "182", // Threaten to boycott
-  "185", // Threaten military
-  "186", // Threaten to fight with small arms
-];
+// GDELT Event root codes we care about (first 2 digits of CAMEO code)
+const RELEVANT_ROOT_CODES = ["14", "17", "18", "19", "20"];
 
 export interface RawGdeltEvent {
   country_code: string;
@@ -102,22 +81,21 @@ function parseGdeltCsv(csv: string): RawGdeltEvent[] {
 
   for (const line of lines) {
     const cols = line.split("\t");
-    if (cols.length < 61) continue;
+    if (cols.length < 58) continue;
 
     const eventCode = cols[COL.EVENTCODE]?.trim();
     if (!eventCode) continue;
 
-    // Check if event code starts with any relevant code
-    const isRelevant = RELEVANT_EVENT_CODES.some(
-      (code) => eventCode === code || eventCode.startsWith(code)
-    );
+    // Check if first 2 chars of event code match relevant root codes
+    const rootCode = eventCode.substring(0, 2);
+    const isRelevant = RELEVANT_ROOT_CODES.includes(rootCode);
     if (!isRelevant) continue;
 
     const goldstein = parseFloat(cols[COL.GOLDSTEINSCALE]);
     if (isNaN(goldstein)) continue;
 
-    // Only keep destabilizing events (negative Goldstein)
-    if (goldstein >= 0) continue;
+    // Only keep destabilizing events (negative Goldstein scale)
+    if (goldstein >= -1) continue;
 
     const countryCode =
       cols[COL.ACTIONGEO_COUNTRYCODE]?.trim() ||
@@ -134,8 +112,8 @@ function parseGdeltCsv(csv: string): RawGdeltEvent[] {
     const eventId = cols[COL.GLOBALEVENTID]?.trim();
     if (!eventId) continue;
 
-    // Normalize intensity: Goldstein -10 → intensity 10, 0 → intensity 0
-    const intensityScore = Math.abs(goldstein) * 10; // 0–100
+    // Normalize intensity: Goldstein -10 → intensity 100, -1 → intensity 10
+    const intensityScore = Math.min(100, Math.abs(goldstein) * 10);
 
     results.push({
       country_code: countryCode.toUpperCase(),
