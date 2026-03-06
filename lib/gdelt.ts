@@ -65,36 +65,20 @@ export async function fetchLatestGdeltEvents(): Promise<RawGdeltEvent[]> {
     throw new Error(`Failed to fetch GDELT CSV: ${zipRes.status}`);
   }
 
-  // Parse zipped CSV in memory using DecompressionStream (Node 18+)
+  // Parse zipped CSV in memory using Node zlib
   const arrayBuffer = await zipRes.arrayBuffer();
-  const decompressed = await decompressGzip(arrayBuffer);
-  const csvText = new TextDecoder().decode(decompressed);
+  const buffer = Buffer.from(arrayBuffer);
+  const csvText = await decompressGzip(buffer);
 
   return parseGdeltCsv(csvText);
 }
 
-async function decompressGzip(buffer: ArrayBuffer): Promise<Uint8Array> {
-  const ds = new DecompressionStream("gzip");
-  const blob = new Blob([buffer]);
-  const stream = blob.stream().pipeThrough(ds);
-  const reader = stream.getReader();
-
-  const chunks: Uint8Array[] = [];
-  let done = false;
-  while (!done) {
-    const { value, done: d } = await reader.read();
-    if (value) chunks.push(value);
-    done = d;
-  }
-
-  const totalLength = chunks.reduce((sum, c) => sum + c.length, 0);
-  const result = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const chunk of chunks) {
-    result.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return result;
+async function decompressGzip(buffer: Buffer): Promise<string> {
+  const zlib = await import("zlib");
+  const { promisify } = await import("util");
+  const gunzip = promisify(zlib.gunzip);
+  const result = await gunzip(buffer);
+  return result.toString("utf-8");
 }
 
 // GDELT 2.0 event CSV columns (tab-separated, 61 columns)
