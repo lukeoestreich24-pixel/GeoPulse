@@ -32,11 +32,23 @@ export async function GET(req: NextRequest) {
     }
 
     // 2. Fetch latest GDELT events
-    const rawEvents = await fetchLatestGdeltEvents();
+    let rawEvents: Awaited<ReturnType<typeof fetchLatestGdeltEvents>> = [];
+    let fetchDebug = "";
+    try {
+      const { events, debug } = await fetchLatestGdeltEvents();
+      rawEvents = events;
+      fetchDebug = debug;
+    } catch (fetchErr) {
+      return NextResponse.json({
+        error: "GDELT fetch failed",
+        details: fetchErr instanceof Error ? fetchErr.message : String(fetchErr),
+      }, { status: 500 });
+    }
+
     console.log(`Fetched ${rawEvents.length} relevant GDELT events`);
 
     if (rawEvents.length === 0) {
-      return NextResponse.json({ message: "No events fetched", results });
+      return NextResponse.json({ message: "No events fetched", results, debug: fetchDebug });
     }
 
     // 3. Insert events, skipping duplicates
