@@ -3,9 +3,16 @@ import { createAdminClient } from "@/lib/supabase";
 import { fetchLatestGdeltEvents, calculateRiskScore } from "@/lib/gdelt";
 import { getCountryInfo } from "@/lib/countries";
 
+export const maxDuration = 60; // 60 second timeout
+
 // Vercel Cron calls this with an Authorization header containing CRON_SECRET
 export async function GET(req: NextRequest) {
+  const authHeader = req.headers.get("authorization");
+  const cronSecret = process.env.CRON_SECRET;
 
+  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
 
   const supabase = createAdminClient();
   const results = { inserted: 0, skipped: 0, errors: 0, countriesUpdated: 0 };
