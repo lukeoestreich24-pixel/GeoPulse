@@ -3,6 +3,9 @@ import { Country } from "@/types";
 import MapClient from "@/components/MapClient";
 import Header from "@/components/Header";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 async function getCountries(): Promise<Country[]> {
   const { data, error } = await supabase
     .from("countries")
@@ -19,6 +22,7 @@ async function getCountries(): Promise<Country[]> {
 
 export default async function HomePage() {
   const countries = await getCountries();
+  console.log("Server: loaded", countries.length, "countries");
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
