@@ -168,13 +168,19 @@ function mapEventCode(code: string): string {
 }
 
 // Recalibrated risk score formula
-// Max score of 100 requires ~15 serious events in 48h
+// Designed so:
+// - 1-2 serious events = 20-30 (low risk)
+// - 5-10 events = 50-70 (medium-high risk)  
+// - 15+ events with high intensity = 90-100 (critical)
 export function calculateRiskScore(
   eventsLast48h: number,
   avgIntensity: number
 ): number {
-  // Weight: each event worth up to 6 points, intensity adds up to 10 points
-  const eventScore = Math.min(60, eventsLast48h * 4);
-  const intensityScore = Math.min(40, (avgIntensity / 10) * 40);
+  // Log scale for events so each additional event matters less at high counts
+  const eventScore = Math.min(70, Math.log1p(eventsLast48h) * 20);
+  // Intensity on a 0-30 scale
+  const intensityScore = Math.min(30, (avgIntensity / 10) * 30);
   return Math.min(100, Math.round(eventScore + intensityScore));
 }
+// Note: calculateRiskScore is already defined above
+
