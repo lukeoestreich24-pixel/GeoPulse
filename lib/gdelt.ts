@@ -1,5 +1,22 @@
-// GDELT Event root codes we care about (first 2 digits of CAMEO code)
-const RELEVANT_ROOT_CODES = ["14", "17", "18", "19", "20"];
+// GDELT CAMEO root codes for geopolitical risk events only
+const RELEVANT_ROOT_CODES = [
+  "13", // Threaten
+  "14", // Protest
+  "15", // Exhibit force
+  "17", // Coerce
+  "18", // Assault
+  "19", // Fight
+  "20", // Engage in unconventional mass violence
+];
+
+// Block known entertainment/lifestyle/non-news domains
+const BLOCKED_DOMAINS = [
+  "imdb.com", "rottentomatoes.com", "variety.com", "hollywood",
+  "entertainment", "celebrity", "gossip", "sport", "football",
+  "soccer", "nba.com", "nfl.com", "music", "lyrics", "recipe",
+  "cooking", "fashion", "beauty", "lifestyle", "travel", "tourism",
+  "weather.com", "horoscope", "astrology", "gaming", "anime",
+];
 
 export interface RawGdeltEvent {
   country_code: string;
@@ -11,8 +28,6 @@ export interface RawGdeltEvent {
   event_id: string;
 }
 
-// GDELT GKG / CSV feed uses tab-separated values
-// We use the GDELT 2.0 events CSV (15-minute updates)
 export async function fetchLatestGdeltEvents(): Promise<{ events: RawGdeltEvent[], debug: string }> {
   const lastUpdateUrl = "http://data.gdeltproject.org/gdeltv2/lastupdate.txt";
 
@@ -47,10 +62,7 @@ export async function fetchLatestGdeltEvents(): Promise<{ events: RawGdeltEvent[
     colCount: firstCols.length,
     eventcode: firstCols[26],
     goldstein: firstCols[30],
-    actor1country: firstCols[7],
     actiongeo_country: firstCols[53],
-    lat: firstCols[56],
-    lng: firstCols[57],
     csvUrl: csvZipUrl,
   });
 
@@ -68,25 +80,28 @@ function extractZip(buffer: Buffer): string {
 }
 
 // GDELT 2.0 event CSV columns (tab-separated, 61 columns)
-// https://www.gdeltproject.org/data/documentation/GDELT-Event_Codebook-V2.0.pdf
 const COL = {
   GLOBALEVENTID: 0,
   EVENTCODE: 26,
   GOLDSTEINSCALE: 30,
   ACTOR1COUNTRYCODE: 7,
-  ACTOR2COUNTRYCODE: 17,
   ACTIONGEO_COUNTRYCODE: 53,
   SOURCEURL: 60,
   ACTIONGEO_LAT: 56,
   ACTIONGEO_LONG: 57,
 };
 
+function isBlockedSource(url: string): boolean {
+  const lower = url.toLowerCase();
+  return BLOCKED_DOMAINS.some((domain) => lower.includes(domain));
+}
+
 function parseGdeltCsv(csv: string): RawGdeltEvent[] {
   const lines = csv.trim().split("\n");
   const results: RawGdeltEvent[] = [];
 
-  // Only process first 500 rows to avoid timeout on free Vercel plan
-  const maxLines = Math.min(lines.length, 500);
+  // Process all rows but apply strict filters
+  const maxLines = Math.min(lines.length, 800);
 
   for (let i = 0; i < maxLines; i++) {
     const line = lines[i];
@@ -96,28 +111,35 @@ function parseGdeltCsv(csv: string): RawGdeltEvent[] {
     const eventCode = cols[COL.EVENTCODE]?.trim();
     if (!eventCode) continue;
 
+    // Only keep relevant CAMEO root codes
+    const rootCode = eventCode.substring(0, 2);
+    if (!RELEVANT_ROOT_CODES.includes(rootCode)) continue;
+
     const goldstein = parseFloat(cols[COL.GOLDSTEINSCALE]);
     if (isNaN(goldstein)) continue;
 
-    // Only keep destabilizing events (negative Goldstein scale)
-    if (goldstein >= -1) continue;
+    // Only keep significantly destabilizing events (below -3)
+    if (goldstein > -3) continue;
+
+    const sourceUrl = cols[COL.SOURCEURL]?.trim();
+    if (!sourceUrl) continue;
+
+    // Block non-news sources
+    if (isBlockedSource(sourceUrl)) continue;
 
     const countryCode =
       cols[COL.ACTIONGEO_COUNTRYCODE]?.trim() ||
       cols[COL.ACTOR1COUNTRYCODE]?.trim();
-    if (!countryCode || countryCode.length < 2) continue;
+    if (!countryCode || countryCode.length !== 2) continue;
 
     const lat = parseFloat(cols[COL.ACTIONGEO_LAT]);
     const lng = parseFloat(cols[COL.ACTIONGEO_LONG]);
     if (isNaN(lat) || isNaN(lng)) continue;
 
-    const sourceUrl = cols[COL.SOURCEURL]?.trim();
-    if (!sourceUrl) continue;
-
     const eventId = cols[COL.GLOBALEVENTID]?.trim();
     if (!eventId) continue;
 
-    // Normalize intensity: Goldstein -10 → intensity 100, -1 → intensity 10
+    // Intensity: Goldstein -10 → 100, -3 → 30
     const intensityScore = Math.min(100, Math.abs(goldstein) * 10);
 
     results.push({
@@ -135,18 +157,23 @@ function parseGdeltCsv(csv: string): RawGdeltEvent[] {
 }
 
 function mapEventCode(code: string): string {
-  if (code.startsWith("19") || code.startsWith("20")) return "conflict";
+  if (code.startsWith("20") || code.startsWith("19")) return "conflict";
+  if (code.startsWith("18")) return "assault";
+  if (code.startsWith("17")) return "coercion";
+  if (code.startsWith("15")) return "force";
   if (code.startsWith("14")) return "protest";
-  if (code.startsWith("17")) return "sanctions";
-  if (code.startsWith("18")) return "threat";
+  if (code.startsWith("13")) return "threat";
   return "other";
 }
 
-// Calculate risk score per country from events in last 48 hours
+// Recalibrated risk score formula
+// Max score of 100 requires ~15 serious events in 48h
 export function calculateRiskScore(
   eventsLast48h: number,
   avgIntensity: number
 ): number {
-  const raw = eventsLast48h * 5 + avgIntensity * 2;
-  return Math.min(100, Math.round(raw));
+  // Weight: each event worth up to 6 points, intensity adds up to 10 points
+  const eventScore = Math.min(60, eventsLast48h * 4);
+  const intensityScore = Math.min(40, (avgIntensity / 10) * 40);
+  return Math.min(100, Math.round(eventScore + intensityScore));
 }
