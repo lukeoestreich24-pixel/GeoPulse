@@ -51,29 +51,31 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ message: "No events fetched", results, debug: fetchDebug });
     }
 
-    // 3. Insert events, skipping duplicates
+    // 3. Insert events in batches to avoid timeout
+    const validEvents = [];
     for (const ev of rawEvents) {
       const countryInfo = getCountryInfo(ev.country_code);
-      if (!countryInfo) continue; // skip unknown countries
+      if (!countryInfo) continue;
+      validEvents.push({
+        id: ev.event_id,
+        country_code: ev.country_code,
+        event_type: ev.event_type,
+        intensity_score: ev.intensity_score,
+        latitude: ev.latitude,
+        longitude: ev.longitude,
+        source_url: ev.source_url,
+        created_at: new Date().toISOString(),
+      });
+    }
 
-      const { error } = await supabase.from("events").upsert(
-        {
-          id: ev.event_id,
-          country_code: ev.country_code,
-          event_type: ev.event_type,
-          intensity_score: ev.intensity_score,
-          latitude: ev.latitude,
-          longitude: ev.longitude,
-          source_url: ev.source_url,
-          created_at: new Date().toISOString(),
-        },
-        { onConflict: "id", ignoreDuplicates: true }
-      );
-
+    if (validEvents.length > 0) {
+      const { error } = await supabase
+        .from("events")
+        .upsert(validEvents, { onConflict: "id", ignoreDuplicates: true });
       if (error) {
         results.errors++;
       } else {
-        results.inserted++;
+        results.inserted = validEvents.length;
       }
     }
 
