@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Country, GdeltEvent } from "@/types";
 import CountrySidebar from "./CountrySidebar";
 import Legend from "./Legend";
@@ -24,10 +24,23 @@ interface MapClientProps {
 }
 
 export default function MapClient({ initialCountries }: MapClientProps) {
+  const [countries, setCountries] = useState<Country[]>(initialCountries);
   const [selectedCountry, setSelectedCountry] = useState<Country | null>(null);
   const [events, setEvents] = useState<GdeltEvent[]>([]);
   const [loadingEvents, setLoadingEvents] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // Always fetch fresh data client-side
+  useEffect(() => {
+    fetch("/api/countries")
+      .then((r) => r.json())
+      .then((data) => {
+        if (Array.isArray(data) && data.length > 0) {
+          setCountries(data);
+        }
+      })
+      .catch(console.error);
+  }, []);
 
   const handleCountryClick = useCallback(async (country: Country) => {
     setSelectedCountry(country);
@@ -61,7 +74,7 @@ export default function MapClient({ initialCountries }: MapClientProps) {
   return (
     <div className="relative w-full h-full">
       <LeafletMap
-        countries={initialCountries}
+        countries={countries}
         onCountryClick={handleCountryClick}
         selectedCountry={selectedCountry}
       />
@@ -76,7 +89,7 @@ export default function MapClient({ initialCountries }: MapClientProps) {
         onClose={handleClose}
       />
 
-      {initialCountries.length === 0 && (
+      {countries.length === 0 && (
         <div className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-[#161b27] border border-[#1e2533] rounded-lg px-4 py-3 text-sm text-gray-400 max-w-sm text-center z-[1000]">
           No data yet. Trigger{" "}
           <code className="text-blue-400">/api/update-events</code> to fetch
