@@ -39,6 +39,18 @@ const FIPS_TO_ISO2: Record<string, string> = {
   GL: "GL", MF: "YT", RE: "RE",
 };
 
+// Cache GeoJSON so we don't re-fetch on every render
+let cachedGeoJson: object | null = null;
+
+async function getGeoJson() {
+  if (cachedGeoJson) return cachedGeoJson;
+  const res = await fetch(
+    "https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson"
+  );
+  cachedGeoJson = await res.json();
+  return cachedGeoJson;
+}
+
 export default function LeafletMapComponent({
   countries,
   onCountryClick,
@@ -48,12 +60,14 @@ export default function LeafletMapComponent({
   const geoJsonLayerRef = useRef<LeafletGeoJSON | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Build a lookup from ISO2 code to country data
+  // Build a lookup from ISO2 code to country data.
+  // Falls back to using country_code directly if it's already ISO2
+  // (i.e. not found in FIPS_TO_ISO2).
   const buildCountryLookup = (countries: Country[]) => {
     const lookup: Record<string, Country> = {};
     for (const c of countries) {
-      const iso2 = FIPS_TO_ISO2[c.country_code];
-      if (iso2) lookup[iso2] = c;
+      const iso2 = FIPS_TO_ISO2[c.country_code] ?? c.country_code;
+      lookup[iso2] = c;
     }
     return lookup;
   };
@@ -108,20 +122,16 @@ export default function LeafletMapComponent({
         geoJsonLayerRef.current = null;
       }
 
-      // Fetch world GeoJSON
-      const res = await fetch(
-        "https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson"
-      );
-      const geojson = await res.json();
+      // Fetch (or use cached) world GeoJSON
+      const geojson = await getGeoJson();
 
       const layer = L.geoJSON(geojson, {
         style: (feature) => {
           const iso2 = feature?.properties?.ISO_A2;
           const country = lookup[iso2];
-          const isSelected = selectedCountry &&
-            lookup[selectedCountry.country_code]
-              ? iso2 === FIPS_TO_ISO2[selectedCountry.country_code]
-              : false;
+          const isSelected =
+            selectedCountry &&
+            iso2 === (FIPS_TO_ISO2[selectedCountry.country_code] ?? selectedCountry.country_code);
 
           if (country) {
             const color = getRiskColorHex(country.risk_score);
@@ -181,23 +191,23 @@ export default function LeafletMapComponent({
       layer.addTo(map);
       geoJsonLayerRef.current = layer;
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [countries]);
 
-  // Re-render layer when selected country changes
+  // Re-render layer styles when selected country changes
   useEffect(() => {
     if (!geoJsonLayerRef.current || !mapRef.current) return;
     import("leaflet").then(() => {
       geoJsonLayerRef.current?.resetStyle();
-      // Re-apply styles with selection
       geoJsonLayerRef.current?.eachLayer((featureLayer) => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const feature = (featureLayer as any).feature;
         const iso2 = feature?.properties?.ISO_A2;
         const lookup = buildCountryLookup(countries);
         const country = lookup[iso2];
-        const isSelected = selectedCountry &&
-          iso2 === FIPS_TO_ISO2[selectedCountry?.country_code ?? ""];
+        const isSelected =
+          selectedCountry &&
+          iso2 === (FIPS_TO_ISO2[selectedCountry.country_code] ?? selectedCountry.country_code);
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (featureLayer as any).setStyle(
@@ -217,7 +227,7 @@ export default function LeafletMapComponent({
         );
       });
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCountry]);
 
   return (
