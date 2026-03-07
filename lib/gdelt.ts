@@ -42,7 +42,8 @@ export async function fetchLatestGdeltEvents(): Promise<{ events: RawGdeltEvent[
   const exportLine = lines.find((l) => l.includes(".export.CSV.zip"));
   if (!exportLine) throw new Error("Could not find GDELT export CSV URL");
 
-  const csvZipUrl = exportLine.trim().split(" ")[2];
+  const parts = exportLine.trim().split(/\s+/);
+  const csvZipUrl = parts[parts.length - 1];
 
   const zipRes = await fetch(csvZipUrl, { cache: "no-store" });
   if (!zipRes.ok) {
