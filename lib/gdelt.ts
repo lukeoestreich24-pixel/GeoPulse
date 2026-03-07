@@ -1,21 +1,52 @@
 // GDELT CAMEO root codes for geopolitical risk events only
+// See: https://www.gdeltproject.org/data/documentation/CAMEO.Manual.1.1b3.pdf
 const RELEVANT_ROOT_CODES = [
+  // Diplomatic / political hostility
+  "10", // Demand
+  "11", // Disapprove
+  "12", // Reject
   "13", // Threaten
-  "14", // Protest
-  "15", // Exhibit force
+  // Sanctions, tariffs, trade restrictions, embargoes
+  "16", // Reduce relations (includes sanctions, tariffs, expulsions)
+  // Force & violence
+  "15", // Exhibit force posture
   "17", // Coerce
   "18", // Assault
   "19", // Fight
   "20", // Engage in unconventional mass violence
+  // Protests & civil unrest
+  "14", // Protest
 ];
+
+// Goldstein score thresholds per category
+// Diplomatic/economic events score closer to 0, violent events score -10
+const GOLDSTEIN_THRESHOLD: Record<string, number> = {
+  "10": -1,  // Demands
+  "11": -1,  // Disapproval
+  "12": -1,  // Rejection
+  "13": -2,  // Threats
+  "14": -2,  // Protests
+  "15": -3,  // Force posture
+  "16": -1,  // Sanctions/tariffs — typically score -1 to -4
+  "17": -3,  // Coercion
+  "18": -5,  // Assault
+  "19": -7,  // Fighting
+  "20": -8,  // Mass violence
+};
 
 // Block known entertainment/lifestyle/non-news domains
 const BLOCKED_DOMAINS = [
-  "imdb.com", "rottentomatoes.com", "variety.com", "hollywood",
-  "entertainment", "celebrity", "gossip", "sport", "football",
-  "soccer", "nba.com", "nfl.com", "music", "lyrics", "recipe",
-  "cooking", "fashion", "beauty", "lifestyle", "travel", "tourism",
-  "weather.com", "horoscope", "astrology", "gaming", "anime",
+  "imdb.com", "rottentomatoes.com", "variety.com",
+  "tmz.com", "people.com", "eonline.com",
+  "entertainment", "celebrity", "gossip",
+  "nba.com", "nfl.com", "espn.com", "mlb.com", "fifa.com",
+  "spotify.com", "lyrics", "genius.com",
+  "recipe", "cooking", "allrecipes",
+  "fashion", "vogue.com", "beauty",
+  "tripadvisor", "booking.com", "airbnb",
+  "weather.com", "horoscope", "astrology",
+  "gaming", "ign.com", "steam", "anime",
+  "obituar", "funeral", "wedding",
 ];
 
 export interface RawGdeltEvent {
@@ -101,7 +132,6 @@ function parseGdeltCsv(csv: string): RawGdeltEvent[] {
   const lines = csv.trim().split("\n");
   const results: RawGdeltEvent[] = [];
 
-  // Process all rows but apply strict filters
   const maxLines = Math.min(lines.length, 800);
 
   for (let i = 0; i < maxLines; i++) {
@@ -112,20 +142,18 @@ function parseGdeltCsv(csv: string): RawGdeltEvent[] {
     const eventCode = cols[COL.EVENTCODE]?.trim();
     if (!eventCode) continue;
 
-    // Only keep relevant CAMEO root codes
     const rootCode = eventCode.substring(0, 2);
     if (!RELEVANT_ROOT_CODES.includes(rootCode)) continue;
 
     const goldstein = parseFloat(cols[COL.GOLDSTEINSCALE]);
     if (isNaN(goldstein)) continue;
 
-    // Only keep significantly destabilizing events (below -3)
-    if (goldstein > -3) continue;
+    const threshold = GOLDSTEIN_THRESHOLD[rootCode] ?? -2;
+    if (goldstein > threshold) continue;
 
     const sourceUrl = cols[COL.SOURCEURL]?.trim();
     if (!sourceUrl) continue;
 
-    // Block non-news sources
     if (isBlockedSource(sourceUrl)) continue;
 
     const countryCode =
@@ -140,7 +168,6 @@ function parseGdeltCsv(csv: string): RawGdeltEvent[] {
     const eventId = cols[COL.GLOBALEVENTID]?.trim();
     if (!eventId) continue;
 
-    // Intensity: Goldstein -10 → 100, -3 → 30
     const intensityScore = Math.min(100, Math.abs(goldstein) * 10);
 
     results.push({
@@ -161,26 +188,45 @@ function mapEventCode(code: string): string {
   if (code.startsWith("20") || code.startsWith("19")) return "conflict";
   if (code.startsWith("18")) return "assault";
   if (code.startsWith("17")) return "coercion";
+  if (code.startsWith("16")) return "sanctions";
   if (code.startsWith("15")) return "force";
   if (code.startsWith("14")) return "protest";
   if (code.startsWith("13")) return "threat";
+  if (code.startsWith("12")) return "rejection";
+  if (code.startsWith("11")) return "condemnation";
+  if (code.startsWith("10")) return "demand";
   return "other";
 }
 
-// Recalibrated risk score formula
-// Designed so:
-// - 1-2 serious events = 20-30 (low risk)
-// - 5-10 events = 50-70 (medium-high risk)  
-// - 15+ events with high intensity = 90-100 (critical)
+/**
+ * Blended risk score combining real-time GDELT events with a
+ * World Bank political stability baseline.
+ *
+ * @param eventsLast48h  - number of relevant GDELT events in the last 48h
+ * @param avgIntensity   - average intensity score of those events (0-100)
+ * @param baselineDanger - World Bank danger baseline for this country (0-100)
+ *                         where 0 = very safe, 100 = very dangerous
+ *                         Defaults to 50 (neutral) if unavailable.
+ *
+ * Formula:
+ *   gdeltScore    = log-scaled event count (0-70) + intensity component (0-30)
+ *   finalScore    = (gdeltScore × 0.6) + (baselineDanger × 0.4)
+ *
+ * This means:
+ *   - A safe country (US, baseline ~15) with moderate GDELT activity
+ *     won't spike above ~45 just because it generates a lot of news
+ *   - A chronically unstable country (Syria, baseline ~90) stays elevated
+ *     even in quiet news cycles
+ */
 export function calculateRiskScore(
   eventsLast48h: number,
-  avgIntensity: number
+  avgIntensity: number,
+  baselineDanger: number = 50
 ): number {
-  // Log scale for events so each additional event matters less at high counts
   const eventScore = Math.min(70, Math.log1p(eventsLast48h) * 20);
-  // Intensity on a 0-30 scale
   const intensityScore = Math.min(30, (avgIntensity / 10) * 30);
-  return Math.min(100, Math.round(eventScore + intensityScore));
-}
-// Note: calculateRiskScore is already defined above
+  const gdeltScore = eventScore + intensityScore;
 
+  const blended = gdeltScore * 0.6 + baselineDanger * 0.4;
+  return Math.min(100, Math.round(blended));
+}
