@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import { Country, getRiskColorHex } from "@/types";
 import type { Map as LeafletMap, GeoJSON as LeafletGeoJSON } from "leaflet";
+import type { GeoJsonObject } from "geojson";
 
 interface LeafletMapProps {
   countries: Country[];
@@ -40,14 +41,14 @@ const FIPS_TO_ISO2: Record<string, string> = {
 };
 
 // Cache GeoJSON so we don't re-fetch on every render
-let cachedGeoJson: object | null = null;
+let cachedGeoJson: GeoJsonObject | null = null;
 
-async function getGeoJson() {
+async function getGeoJson(): Promise<GeoJsonObject> {
   if (cachedGeoJson) return cachedGeoJson;
   const res = await fetch(
     "https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson"
   );
-  cachedGeoJson = await res.json();
+  cachedGeoJson = (await res.json()) as GeoJsonObject;
   return cachedGeoJson;
 }
 
