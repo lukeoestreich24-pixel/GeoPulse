@@ -45,9 +45,12 @@ export async function fetchLatestGdeltEvents(): Promise<{ events: RawGdeltEvent[
   const debug = JSON.stringify({
     totalLines: csvLines.length,
     colCount: firstCols.length,
-    col26: firstCols[26],
-    col30: firstCols[30],
-    col51: firstCols[51],
+    eventcode: firstCols[26],
+    goldstein: firstCols[30],
+    actor1country: firstCols[7],
+    actiongeo_country: firstCols[53],
+    lat: firstCols[56],
+    lng: firstCols[57],
     csvUrl: csvZipUrl,
   });
 
@@ -69,13 +72,13 @@ function extractZip(buffer: Buffer): string {
 const COL = {
   GLOBALEVENTID: 0,
   EVENTCODE: 26,
-  GOLDSTEINSCALE: 30, // -10 to +10 (negative = destabilizing)
+  GOLDSTEINSCALE: 30,
   ACTOR1COUNTRYCODE: 7,
   ACTOR2COUNTRYCODE: 17,
-  ACTIONGEO_COUNTRYCODE: 51,
+  ACTIONGEO_COUNTRYCODE: 53,
   SOURCEURL: 60,
-  ACTIONGEO_LAT: 53,
-  ACTIONGEO_LONG: 54,
+  ACTIONGEO_LAT: 56,
+  ACTIONGEO_LONG: 57,
 };
 
 function parseGdeltCsv(csv: string): RawGdeltEvent[] {
@@ -88,11 +91,6 @@ function parseGdeltCsv(csv: string): RawGdeltEvent[] {
 
     const eventCode = cols[COL.EVENTCODE]?.trim();
     if (!eventCode) continue;
-
-    // Check if first 2 chars of event code match relevant root codes
-    const rootCode = eventCode.substring(0, 2);
-    const isRelevant = RELEVANT_ROOT_CODES.includes(rootCode);
-    if (!isRelevant) continue;
 
     const goldstein = parseFloat(cols[COL.GOLDSTEINSCALE]);
     if (isNaN(goldstein)) continue;
