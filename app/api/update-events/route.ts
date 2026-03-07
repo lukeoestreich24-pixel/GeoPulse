@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase";
-import { fetchLatestGdeltEvents, calculateRiskScore } from "@/lib/gdelt";
+import { fetchLatestGdeltEvents, calculateRiskScore, RawGdeltEvent } from "@/lib/gdelt";
 import { getCountryInfo } from "@/lib/countries";
 
 export const maxDuration = 60; // 60 second timeout
@@ -32,7 +32,7 @@ export async function GET(req: NextRequest) {
     }
 
     // 2. Fetch latest GDELT events
-    let rawEvents: Awaited<ReturnType<typeof fetchLatestGdeltEvents>> = [];
+    let rawEvents: RawGdeltEvent[] = [];
     let fetchDebug = "";
     try {
       const { events, debug } = await fetchLatestGdeltEvents();
