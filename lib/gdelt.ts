@@ -85,7 +85,11 @@ function parseGdeltCsv(csv: string): RawGdeltEvent[] {
   const lines = csv.trim().split("\n");
   const results: RawGdeltEvent[] = [];
 
-  for (const line of lines) {
+  // Only process first 500 rows to avoid timeout on free Vercel plan
+  const maxLines = Math.min(lines.length, 500);
+
+  for (let i = 0; i < maxLines; i++) {
+    const line = lines[i];
     const cols = line.split("\t");
     if (cols.length < 58) continue;
 
