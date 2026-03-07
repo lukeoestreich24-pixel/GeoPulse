@@ -2,9 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { Country, getRiskColorHex } from "@/types";
-
-// Leaflet is loaded dynamically — types-only import is fine here
-import type { Map as LeafletMap, CircleMarker } from "leaflet";
+import type { Map as LeafletMap, GeoJSON as LeafletGeoJSON } from "leaflet";
 
 interface LeafletMapProps {
   countries: Country[];
@@ -12,45 +10,72 @@ interface LeafletMapProps {
   selectedCountry: Country | null;
 }
 
+// FIPS to ISO2 mapping for GeoJSON matching
+const FIPS_TO_ISO2: Record<string, string> = {
+  AF: "AF", AG: "DZ", AJ: "AZ", AL: "AL", AM: "AM", AO: "AO", AR: "AR",
+  AS: "AU", AU: "AT", BA: "BH", BC: "BW", BE: "BE", BG: "BD", BK: "BA",
+  BL: "BO", BM: "MM", BN: "BJ", BO: "BY", BR: "BR", BT: "BT", BU: "BG",
+  BX: "BN", BY: "BI", CA: "CA", CB: "KH", CD: "TD", CF: "CG", CG: "CD",
+  CH: "CN", CI: "CL", CM: "CM", CO: "CO", CS: "CR", CT: "CF", CU: "CU",
+  CV: "CV", CY: "CY", DA: "DK", DJ: "DJ", DR: "DO", EC: "EC", EG: "EG",
+  EI: "IE", EK: "GQ", EN: "EE", ER: "ER", ES: "SV", ET: "ET", EZ: "CZ",
+  FI: "FI", FJ: "FJ", FR: "FR", GA: "GM", GB: "GA", GG: "GE", GH: "GH",
+  GM: "DE", GR: "GR", GT: "GT", GV: "GN", GY: "GY", HA: "HT", HN: "HN",
+  HU: "HU", IC: "IS", ID: "ID", IN: "IN", IQ: "IQ", IR: "IR", IS: "IL",
+  IT: "IT", IV: "CI", IZ: "IQ", JA: "JP", JM: "JM", JO: "JO", KE: "KE",
+  KG: "KG", KN: "KP", KO: "KR", KU: "KW", KZ: "KZ", LA: "LA", LE: "LB",
+  LG: "LV", LH: "LT", LI: "LR", LO: "SK", LS: "LI", LT: "LS", LU: "LU",
+  LY: "LY", MA: "MG", MC: "MO", MD: "MD", MG: "MN", MI: "MW", MK: "MK",
+  ML: "ML", MN: "MC", MO: "MA", MR: "MR", MT: "MT", MU: "OM", MV: "MV",
+  MX: "MX", MY: "MY", MZ: "MZ", NG: "NE", NH: "VU", NI: "NG", NL: "NL",
+  NO: "NO", NP: "NP", NS: "SR", NU: "NI", NZ: "NZ", PA: "PY", PE: "PE",
+  PK: "PK", PL: "PL", PM: "PA", PO: "PT", PP: "PG", PS: "PW", PU: "GW",
+  QA: "QA", RO: "RO", RP: "PH", RS: "RU", RW: "RW", SA: "SA", SF: "ZA",
+  SG: "SN", SI: "SI", SL: "SL", SN: "SG", SO: "SO", SP: "ES", SR: "RS",
+  SS: "SS", SU: "SD", SW: "SE", SY: "SY", SZ: "CH", TD: "TT", TH: "TH",
+  TI: "TJ", TN: "TO", TO: "TG", TS: "TN", TT: "TL", TU: "TR", TX: "TM",
+  TZ: "TZ", UG: "UG", UK: "GB", UP: "UA", US: "US", UY: "UY", UZ: "UZ",
+  VE: "VE", VM: "VN", WA: "NA", WE: "PS", YM: "YE", ZA: "ZM", ZI: "ZW",
+  GL: "GL", MF: "YT", RE: "RE",
+};
+
 export default function LeafletMapComponent({
   countries,
   onCountryClick,
   selectedCountry,
 }: LeafletMapProps) {
   const mapRef = useRef<LeafletMap | null>(null);
-  const markersRef = useRef<Map<string, CircleMarker>>(new Map());
+  const geoJsonLayerRef = useRef<LeafletGeoJSON | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Initialize map once
+  // Build a lookup from ISO2 code to country data
+  const buildCountryLookup = (countries: Country[]) => {
+    const lookup: Record<string, Country> = {};
+    for (const c of countries) {
+      const iso2 = FIPS_TO_ISO2[c.country_code];
+      if (iso2) lookup[iso2] = c;
+    }
+    return lookup;
+  };
+
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
 
-    // Dynamically import Leaflet (client-only)
     import("leaflet").then((L) => {
-      // Fix default marker icon path (broken in Webpack)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       delete (L.Icon.Default.prototype as any)._getIconUrl;
-      L.Icon.Default.mergeOptions({
-        iconRetinaUrl:
-          "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
-        iconUrl:
-          "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
-        shadowUrl:
-          "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
-      });
 
       const map = L.map(containerRef.current!, {
         center: [20, 10],
         zoom: 2.5,
         minZoom: 2,
-        maxZoom: 10,
+        maxZoom: 8,
         zoomControl: true,
         attributionControl: true,
       });
 
-      // Dark tile layer (CartoDB Dark Matter — free, no token needed)
       L.tileLayer(
-        "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+        "https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png",
         {
           attribution:
             '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
@@ -68,95 +93,139 @@ export default function LeafletMapComponent({
         mapRef.current = null;
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Update markers whenever countries change
   useEffect(() => {
-    if (!mapRef.current) return;
+    if (!mapRef.current || countries.length === 0) return;
 
-    import("leaflet").then((L) => {
+    import("leaflet").then(async (L) => {
       const map = mapRef.current!;
+      const lookup = buildCountryLookup(countries);
 
-      // Remove old markers not in new data
-      Array.from(markersRef.current.entries()).forEach(([code, marker]) => {
-        if (!countries.find((c) => c.country_code === code)) {
-          marker.remove();
-          markersRef.current.delete(code);
-        }
-      });
-
-      // Add / update markers
-      for (const country of countries) {
-        const color = getRiskColorHex(country.risk_score);
-        const radius = Math.max(6, Math.min(24, country.risk_score / 4));
-
-        const existing = markersRef.current.get(country.country_code);
-
-        if (existing) {
-          existing.setStyle({ color, fillColor: color });
-          existing.setRadius(radius);
-        } else {
-          const marker = L.circleMarker(
-            [country.latitude, country.longitude],
-            {
-              radius,
-              color,
-              fillColor: color,
-              fillOpacity: 0.5,
-              weight: 1.5,
-              opacity: 0.9,
-            }
-          );
-
-          marker.on("click", () => onCountryClick(country));
-          marker.on("mouseover", () => {
-            marker.setStyle({ fillOpacity: 0.8 });
-            marker
-              .bindTooltip(
-                `<div class="font-medium">${country.country_name}</div><div class="text-xs">Risk: ${country.risk_score}/100</div>`,
-                { className: "geopulse-tooltip", sticky: true }
-              )
-              .openTooltip();
-          });
-          marker.on("mouseout", () => {
-            marker.setStyle({ fillOpacity: 0.5 });
-            marker.closeTooltip();
-          });
-
-          marker.addTo(map);
-          markersRef.current.set(country.country_code, marker);
-        }
+      // Remove old GeoJSON layer
+      if (geoJsonLayerRef.current) {
+        geoJsonLayerRef.current.remove();
+        geoJsonLayerRef.current = null;
       }
-    });
-  }, [countries, onCountryClick]);
 
-  // Highlight selected country
+      // Fetch world GeoJSON
+      const res = await fetch(
+        "https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson"
+      );
+      const geojson = await res.json();
+
+      const layer = L.geoJSON(geojson, {
+        style: (feature) => {
+          const iso2 = feature?.properties?.ISO_A2;
+          const country = lookup[iso2];
+          const isSelected = selectedCountry &&
+            lookup[selectedCountry.country_code]
+              ? iso2 === FIPS_TO_ISO2[selectedCountry.country_code]
+              : false;
+
+          if (country) {
+            const color = getRiskColorHex(country.risk_score);
+            return {
+              fillColor: color,
+              fillOpacity: isSelected ? 0.85 : 0.6,
+              color: isSelected ? "#ffffff" : "#1e2533",
+              weight: isSelected ? 2 : 0.5,
+            };
+          }
+          return {
+            fillColor: "#1e2533",
+            fillOpacity: 0.4,
+            color: "#0f1117",
+            weight: 0.5,
+          };
+        },
+        onEachFeature: (feature, featureLayer) => {
+          const iso2 = feature?.properties?.ISO_A2;
+          const country = lookup[iso2];
+
+          featureLayer.on("mouseover", () => {
+            const el = featureLayer as unknown as { setStyle: (s: object) => void };
+            if (country) {
+              el.setStyle({ fillOpacity: 0.85 });
+              featureLayer
+                .bindTooltip(
+                  `<div class="font-medium">${country.country_name}</div><div class="text-xs">Risk: ${country.risk_score}/100</div>`,
+                  { className: "geopulse-tooltip", sticky: true }
+                )
+                .openTooltip();
+            } else {
+              el.setStyle({ fillOpacity: 0.6 });
+              featureLayer
+                .bindTooltip(
+                  `<div class="font-medium">${feature.properties?.ADMIN || iso2}</div><div class="text-xs text-gray-500">No data</div>`,
+                  { className: "geopulse-tooltip", sticky: true }
+                )
+                .openTooltip();
+            }
+          });
+
+          featureLayer.on("mouseout", () => {
+            const el = featureLayer as unknown as { setStyle: (s: object) => void };
+            el.setStyle({
+              fillOpacity: country ? 0.6 : 0.4,
+            });
+            featureLayer.closeTooltip();
+          });
+
+          featureLayer.on("click", () => {
+            if (country) onCountryClick(country);
+          });
+        },
+      });
+
+      layer.addTo(map);
+      geoJsonLayerRef.current = layer;
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [countries]);
+
+  // Re-render layer when selected country changes
   useEffect(() => {
-    if (!mapRef.current) return;
+    if (!geoJsonLayerRef.current || !mapRef.current) return;
     import("leaflet").then(() => {
-      Array.from(markersRef.current.entries()).forEach(([code, marker]) => {
-        const country = countries.find((c) => c.country_code === code);
-        if (!country) return;
-        const isSelected = selectedCountry?.country_code === code;
-        marker.setStyle({
-          weight: isSelected ? 3 : 1.5,
-          opacity: isSelected ? 1 : 0.9,
-          fillOpacity: isSelected ? 0.8 : 0.5,
-        });
+      geoJsonLayerRef.current?.resetStyle();
+      // Re-apply styles with selection
+      geoJsonLayerRef.current?.eachLayer((featureLayer) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const feature = (featureLayer as any).feature;
+        const iso2 = feature?.properties?.ISO_A2;
+        const lookup = buildCountryLookup(countries);
+        const country = lookup[iso2];
+        const isSelected = selectedCountry &&
+          iso2 === FIPS_TO_ISO2[selectedCountry?.country_code ?? ""];
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (featureLayer as any).setStyle(
+          country
+            ? {
+                fillColor: getRiskColorHex(country.risk_score),
+                fillOpacity: isSelected ? 0.85 : 0.6,
+                color: isSelected ? "#ffffff" : "#1e2533",
+                weight: isSelected ? 2 : 0.5,
+              }
+            : {
+                fillColor: "#1e2533",
+                fillOpacity: 0.4,
+                color: "#0f1117",
+                weight: 0.5,
+              }
+        );
       });
     });
-  }, [selectedCountry, countries]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCountry]);
 
   return (
     <>
-      {/* Leaflet CSS */}
       <link
         rel="stylesheet"
         href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
       />
-
-      {/* Tooltip styles injected inline */}
       <style>{`
         .geopulse-tooltip {
           background: #161b27;
@@ -167,18 +236,8 @@ export default function LeafletMapComponent({
           padding: 6px 10px;
           box-shadow: 0 4px 12px rgba(0,0,0,0.5);
         }
-        .geopulse-tooltip::before {
-          display: none;
-        }
-        .leaflet-tooltip-top.geopulse-tooltip::before {
-          display: none;
-        }
-        .leaflet-container {
-          background: #0f1117;
-        }
-        .leaflet-zoom-box {
-          border-color: #3b82f6;
-        }
+        .geopulse-tooltip::before { display: none; }
+        .leaflet-container { background: #0a0d14; }
         .leaflet-control-zoom a {
           background: #161b27 !important;
           color: #9ca3af !important;
@@ -189,7 +248,6 @@ export default function LeafletMapComponent({
           color: #f3f4f6 !important;
         }
       `}</style>
-
       <div ref={containerRef} className="w-full h-full" />
     </>
   );
