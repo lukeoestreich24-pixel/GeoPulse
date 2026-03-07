@@ -128,7 +128,7 @@ export default function LeafletMapComponent({
 
       const layer = L.geoJSON(geojson, {
         style: (feature) => {
-          const iso2 = feature?.properties?.ISO_A2;
+          const iso2 = feature?.properties?.["ISO3166-1-Alpha-2"];
           const country = lookup[iso2];
           const isSelected =
             selectedCountry &&
@@ -151,7 +151,7 @@ export default function LeafletMapComponent({
           };
         },
         onEachFeature: (feature, featureLayer) => {
-          const iso2 = feature?.properties?.ISO_A2;
+          const iso2 = feature?.properties?.["ISO3166-1-Alpha-2"];
           const country = lookup[iso2];
 
           featureLayer.on("mouseover", () => {
@@ -168,7 +168,7 @@ export default function LeafletMapComponent({
               el.setStyle({ fillOpacity: 0.6 });
               featureLayer
                 .bindTooltip(
-                  `<div class="font-medium">${feature.properties?.ADMIN || iso2}</div><div class="text-xs text-gray-500">No data</div>`,
+                  `<div class="font-medium">${feature.properties?.name || iso2}</div><div class="text-xs text-gray-500">No data</div>`,
                   { className: "geopulse-tooltip", sticky: true }
                 )
                 .openTooltip();
@@ -203,7 +203,7 @@ export default function LeafletMapComponent({
       geoJsonLayerRef.current?.eachLayer((featureLayer) => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const feature = (featureLayer as any).feature;
-        const iso2 = feature?.properties?.ISO_A2;
+        const iso2 = feature?.properties?.["ISO3166-1-Alpha-2"];
         const lookup = buildCountryLookup(countries);
         const country = lookup[iso2];
         const isSelected =
