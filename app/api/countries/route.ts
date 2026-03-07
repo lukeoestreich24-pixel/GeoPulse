@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 
-export const revalidate = 300; // revalidate every 5 minutes
+export const revalidate = 0;
+export const dynamic = "force-dynamic";
 
 export async function GET() {
   const { data, error } = await supabase
