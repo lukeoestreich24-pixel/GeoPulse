@@ -1,4 +1,4 @@
-"use client";
+\"use client";
 
 import { useEffect, useRef, useCallback } from "react";
 import { Country, getRiskColorHex } from "@/types";
@@ -19,7 +19,6 @@ interface LeafletMapProps {
   safetyScores: Record<string, number>;
 }
 
-// FIPS to ISO2 — covers all known collision cases explicitly
 const FIPS_TO_ISO2: Record<string, string> = {
   AF: "AF", AG: "DZ", AJ: "AZ", AL: "AL", AM: "AM", AO: "AO", AR: "AR",
   AS: "AU", AU: "AT",
@@ -66,7 +65,6 @@ const FIPS_TO_ISO2: Record<string, string> = {
   GL: "GL", MF: "YT", RE: "RE",
 };
 
-// GeoJSON cache
 let cachedGeoJson: GeoJsonObject | null = null;
 async function getGeoJson(): Promise<GeoJsonObject> {
   if (cachedGeoJson) return cachedGeoJson;
@@ -77,7 +75,6 @@ async function getGeoJson(): Promise<GeoJsonObject> {
   return cachedGeoJson;
 }
 
-// Build FIPS → Country lookup
 function buildCountryLookup(countries: Country[]): Record<string, Country> {
   const lookup: Record<string, Country> = {};
   for (const c of countries) {
@@ -87,7 +84,6 @@ function buildCountryLookup(countries: Country[]): Record<string, Country> {
   return lookup;
 }
 
-// Build ISO2 set for airspace closures
 const CLOSED_ISO2 = new Set(
   AIRSPACE_CLOSURES.filter((c) => c.severity === "closed").map((c) => c.iso2)
 );
@@ -108,7 +104,18 @@ export default function LeafletMapComponent({
   const flightIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // ── Initialise map once ────────────────────────────────────────────────────
+  // Keep refs in sync so event handler closures always read the latest values
+  const modeRef = useRef<MapMode>(mode);
+  const safetyScoresRef = useRef<Record<string, number>>(safetyScores);
+  const countriesRef = useRef<Country[]>(countries);
+  const selectedCountryRef = useRef<Country | null>(selectedCountry);
+
+  useEffect(() => { modeRef.current = mode; }, [mode]);
+  useEffect(() => { safetyScoresRef.current = safetyScores; }, [safetyScores]);
+  useEffect(() => { countriesRef.current = countries; }, [countries]);
+  useEffect(() => { selectedCountryRef.current = selectedCountry; }, [selectedCountry]);
+
+  // ── Init map once ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
 
@@ -136,6 +143,9 @@ export default function LeafletMapComponent({
       ).addTo(map);
 
       mapRef.current = map;
+
+      // Build initial layer once map is ready
+      buildLayer(L, map);
     });
 
     return () => {
@@ -145,25 +155,33 @@ export default function LeafletMapComponent({
         mapRef.current = null;
       }
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Render flight dots (travel mode only) ─────────────────────────────────
+  // ── Rebuild layer when data changes ───────────────────────────────────────
+  useEffect(() => {
+    if (!mapRef.current) return;
+    if (mode === "safety" && Object.keys(safetyScores).length === 0) return;
+
+    import("leaflet").then((L) => {
+      if (!mapRef.current) return;
+      buildLayer(L, mapRef.current);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [countries, mode, safetyScores]);
+
+  // ── Render flights ────────────────────────────────────────────────────────
   const renderFlights = useCallback(async () => {
     if (!mapRef.current) return;
     import("leaflet").then(async (L) => {
       const map = mapRef.current!;
-
       if (flightLayerRef.current) {
         flightLayerRef.current.remove();
         flightLayerRef.current = null;
       }
 
       let flights: LiveFlight[] = [];
-      try {
-        flights = await fetchLiveFlights();
-      } catch {
-        return;
-      }
+      try { flights = await fetchLiveFlights(); } catch { return; }
 
       const canvas = L.canvas({ padding: 0.5 });
       const markers = flights.map((f) =>
@@ -181,69 +199,58 @@ export default function LeafletMapComponent({
           { className: "geopulse-tooltip", sticky: true }
         )
       );
-
       const layer = L.layerGroup(markers);
       layer.addTo(map);
       flightLayerRef.current = layer;
     });
   }, []);
 
-  // ── Build/rebuild choropleth when countries, mode, or safetyScores change ──
-  useEffect(() => {
-    if (!mapRef.current) return;
+  // ── Core layer builder — reads from refs so it's always current ───────────
+  function buildLayer(L: typeof import("leaflet"), map: LeafletMap) {
+    // Clean up old layers
+    if (geoJsonLayerRef.current) { geoJsonLayerRef.current.remove(); geoJsonLayerRef.current = null; }
+    if (flightLayerRef.current)  { flightLayerRef.current.remove();  flightLayerRef.current = null;  }
+    if (flightIntervalRef.current) { clearInterval(flightIntervalRef.current); flightIntervalRef.current = null; }
 
-    // Wait for safety scores before rendering safety mode
-    if (mode === "safety" && Object.keys(safetyScores).length === 0) return;
-
-    import("leaflet").then(async (L) => {
-      const map = mapRef.current!;
-      const lookup = buildCountryLookup(countries);
-
-      // Remove previous layers
-      if (geoJsonLayerRef.current) {
-        geoJsonLayerRef.current.remove();
-        geoJsonLayerRef.current = null;
-      }
-      if (flightLayerRef.current) {
-        flightLayerRef.current.remove();
-        flightLayerRef.current = null;
-      }
-      if (flightIntervalRef.current) {
-        clearInterval(flightIntervalRef.current);
-        flightIntervalRef.current = null;
-      }
-
-      const geojson = await getGeoJson();
+    getGeoJson().then((geojson) => {
+      const currentMode = modeRef.current;
+      const currentSafety = safetyScoresRef.current;
+      const currentCountries = countriesRef.current;
+      const lookup = buildCountryLookup(currentCountries);
 
       const layer = L.geoJSON(geojson, {
         style: (feature) => {
           const iso2: string = feature?.properties?.["ISO3166-1-Alpha-2"] ?? "";
-          return getFeatureStyle(iso2, lookup, mode, safetyScores, selectedCountry);
+          return getFeatureStyle(iso2, lookup, currentMode, currentSafety, selectedCountryRef.current);
         },
         onEachFeature: (feature, featureLayer) => {
           const iso2: string = feature?.properties?.["ISO3166-1-Alpha-2"] ?? "";
-          const lookup2 = buildCountryLookup(countries);
-          const country = lookup2[iso2];
 
           featureLayer.on("mouseover", () => {
+            // Always read latest values from refs
+            const latestLookup = buildCountryLookup(countriesRef.current);
+            const country = latestLookup[iso2];
             const el = featureLayer as unknown as { setStyle: (s: object) => void };
             el.setStyle({ fillOpacity: 0.9 });
             featureLayer
-              .bindTooltip(buildTooltip(iso2, country, mode, safetyScores, feature), {
-                className: "geopulse-tooltip",
-                sticky: true,
-              })
+              .bindTooltip(
+                buildTooltip(iso2, country, modeRef.current, safetyScoresRef.current, feature),
+                { className: "geopulse-tooltip", sticky: true }
+              )
               .openTooltip();
           });
 
           featureLayer.on("mouseout", () => {
+            const latestLookup = buildCountryLookup(countriesRef.current);
             const el = featureLayer as unknown as { setStyle: (s: object) => void };
-            const style = getFeatureStyle(iso2, lookup2, mode, safetyScores, selectedCountry);
+            const style = getFeatureStyle(iso2, latestLookup, modeRef.current, safetyScoresRef.current, selectedCountryRef.current);
             el.setStyle({ fillOpacity: style.fillOpacity });
             featureLayer.closeTooltip();
           });
 
           featureLayer.on("click", () => {
+            const latestLookup = buildCountryLookup(countriesRef.current);
+            const country = latestLookup[iso2];
             if (country) onCountryClick(country);
           });
         },
@@ -252,28 +259,25 @@ export default function LeafletMapComponent({
       layer.addTo(map);
       geoJsonLayerRef.current = layer;
 
-      // Travel mode: load flights + start refresh interval
-      if (mode === "travel") {
+      if (currentMode === "travel") {
         renderFlights();
         flightIntervalRef.current = setInterval(renderFlights, 60_000);
       }
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [countries, mode, safetyScores]);
+  }
 
   // ── Re-style on selection change ──────────────────────────────────────────
   useEffect(() => {
     if (!geoJsonLayerRef.current) return;
+    const lookup = buildCountryLookup(countries);
     geoJsonLayerRef.current.eachLayer((featureLayer) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const feature = (featureLayer as any).feature;
-      const iso2: string = feature?.properties?.["ISO3166-1-Alpha-2"] ?? "";
-      const lookup = buildCountryLookup(countries);
+      const iso2: string = (featureLayer as any).feature?.properties?.["ISO3166-1-Alpha-2"] ?? "";
       const style = getFeatureStyle(iso2, lookup, mode, safetyScores, selectedCountry);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (featureLayer as any).setStyle(style);
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCountry]);
 
   return (
@@ -323,26 +327,16 @@ function getFeatureStyle(
   const base = { weight: isSelected ? 2 : 0.5, color: isSelected ? "#ffffff" : "#1e2533" };
 
   if (mode === "geopolitical") {
-    if (country) {
-      return {
-        ...base,
-        fillColor: getRiskColorHex(country.risk_score),
-        fillOpacity: isSelected ? 0.9 : 0.65,
-      };
-    }
-    return { ...base, fillColor: "#1e2533", fillOpacity: 0.4 };
+    return country
+      ? { ...base, fillColor: getRiskColorHex(country.risk_score), fillOpacity: isSelected ? 0.9 : 0.65 }
+      : { ...base, fillColor: "#1e2533", fillOpacity: 0.4 };
   }
 
   if (mode === "safety") {
     const score = safetyScores[iso2];
-    if (score !== undefined) {
-      return {
-        ...base,
-        fillColor: getSafetyColor(score),
-        fillOpacity: isSelected ? 0.9 : 0.65,
-      };
-    }
-    return { ...base, fillColor: "#1e2533", fillOpacity: 0.4 };
+    return score !== undefined
+      ? { ...base, fillColor: getSafetyColor(score), fillOpacity: isSelected ? 0.9 : 0.65 }
+      : { ...base, fillColor: "#1e2533", fillOpacity: 0.4 };
   }
 
   if (mode === "travel") {
@@ -351,26 +345,12 @@ function getFeatureStyle(
     const fillColor = ADVISORY_COLORS[level];
     const fillOpacity = level === 1 ? 0.35 : isSelected ? 0.9 : 0.65;
 
-    // Airspace closures get a thick dashed border
     if (CLOSED_ISO2.has(iso2)) {
-      return {
-        fillColor,
-        fillOpacity,
-        color: "#ef4444",
-        weight: 2.5,
-        dashArray: "6 3",
-      };
+      return { fillColor, fillOpacity, color: "#ef4444", weight: 2.5, dashArray: "6 3" };
     }
     if (RESTRICTED_ISO2.has(iso2)) {
-      return {
-        fillColor,
-        fillOpacity,
-        color: "#f97316",
-        weight: 2,
-        dashArray: "5 4",
-      };
+      return { fillColor, fillOpacity, color: "#f97316", weight: 2, dashArray: "5 4" };
     }
-
     return { ...base, fillColor, fillOpacity };
   }
 
@@ -390,32 +370,26 @@ function buildTooltip(
   const name = country?.country_name ?? feature?.properties?.name ?? iso2;
 
   if (mode === "geopolitical") {
-    if (country) {
-      return `<div class="font-medium">${name}</div><div class="text-xs">Risk: ${country.risk_score}/100</div>`;
-    }
-    return `<div class="font-medium">${name}</div><div class="text-xs text-gray-500">No data</div>`;
+    return country
+      ? `<div class="font-medium">${name}</div><div class="text-xs">Risk: ${country.risk_score}/100</div>`
+      : `<div class="font-medium">${name}</div><div class="text-xs text-gray-500">No data</div>`;
   }
 
   if (mode === "safety") {
     const score = safetyScores[iso2];
-    if (score !== undefined) {
-      return `<div class="font-medium">${name}</div>
-              <div class="text-xs">Safety: ${score}/100 — ${getSafetyLabel(score)}</div>`;
-    }
-    return `<div class="font-medium">${name}</div><div class="text-xs text-gray-500">No data</div>`;
+    return score !== undefined
+      ? `<div class="font-medium">${name}</div><div class="text-xs">Safety: ${score}/100 — ${getSafetyLabel(score)}</div>`
+      : `<div class="font-medium">${name}</div><div class="text-xs text-gray-500">No data</div>`;
   }
 
   if (mode === "travel") {
     const advisory = TRAVEL_ADVISORIES[iso2];
     const level = advisory?.level ?? 1;
-    const levelLabel = ADVISORY_LABELS[level];
     const closure = AIRSPACE_CLOSURES.find((c) => c.iso2 === iso2);
 
     let html = `<div class="font-medium">${name}</div>
-                <div class="text-xs">Level ${level}: ${levelLabel}</div>`;
-    if (advisory?.reason) {
-      html += `<div class="text-xs text-gray-400">${advisory.reason}</div>`;
-    }
+                <div class="text-xs">Level ${level}: ${ADVISORY_LABELS[level]}</div>`;
+    if (advisory?.reason) html += `<div class="text-xs text-gray-400">${advisory.reason}</div>`;
     if (closure) {
       const badge = closure.severity === "closed" ? "🚫 Airspace Closed" : "⚠️ Airspace Restricted";
       html += `<div class="text-xs mt-1">${badge}: ${closure.reason}</div>`;
