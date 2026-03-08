@@ -11,32 +11,62 @@ interface LeafletMapProps {
   selectedCountry: Country | null;
 }
 
-// FIPS to ISO2 mapping for GeoJSON matching
+// FIPS to ISO2 mapping for GeoJSON matching.
+// Every FIPS code must be explicitly listed here — do NOT rely on the
+// fallback for codes that collide with another country's ISO2 code.
+// Known collisions that caused wrong tooltips:
+//   BD (Bermuda FIPS) collides with BD (Bangladesh ISO2)  → must map to BM
+//   CN (Comoros FIPS) collides with CN (China ISO2)       → must map to KM
+//   DO (Dominica FIPS) collides with DO (Dom. Rep ISO2)   → must map to DM
+//   NA (Neth. Antilles FIPS) collides with NA (Namibia ISO2) → must map to AN
 const FIPS_TO_ISO2: Record<string, string> = {
   AF: "AF", AG: "DZ", AJ: "AZ", AL: "AL", AM: "AM", AO: "AO", AR: "AR",
-  AS: "AU", AU: "AT", BA: "BH", BC: "BW", BE: "BE", BG: "BD", BK: "BA",
+  AS: "AU", AU: "AT",
+  BA: "BH", BB: "BB", BC: "BW", BD: "BM", // BD=Bermuda→BM (not Bangladesh)
+  BE: "BE", BF: "BS", BG: "BD", BH: "BZ", BK: "BA",
   BL: "BO", BM: "MM", BN: "BJ", BO: "BY", BR: "BR", BT: "BT", BU: "BG",
-  BX: "BN", BY: "BI", CA: "CA", CB: "KH", CD: "TD", CF: "CG", CG: "CD",
-  CH: "CN", CI: "CL", CM: "CM", CO: "CO", CS: "CR", CT: "CF", CU: "CU",
-  CV: "CV", CY: "CY", DA: "DK", DJ: "DJ", DR: "DO", EC: "EC", EG: "EG",
-  EI: "IE", EK: "GQ", EN: "EE", ER: "ER", ES: "SV", ET: "ET", EZ: "CZ",
-  FI: "FI", FJ: "FJ", FR: "FR", GA: "GM", GB: "GA", GG: "GE", GH: "GH",
-  GM: "DE", GR: "GR", GT: "GT", GV: "GN", GY: "GY", HA: "HT", HN: "HN",
-  HU: "HU", IC: "IS", ID: "ID", IN: "IN", IQ: "IQ", IR: "IR", IS: "IL",
-  IT: "IT", IV: "CI", IZ: "IQ", JA: "JP", JM: "JM", JO: "JO", KE: "KE",
-  KG: "KG", KN: "KP", KO: "KR", KU: "KW", KZ: "KZ", LA: "LA", LE: "LB",
-  LG: "LV", LH: "LT", LI: "LR", LO: "SK", LS: "LI", LT: "LS", LU: "LU",
-  LY: "LY", MA: "MG", MC: "MO", MD: "MD", MG: "MN", MI: "MW", MK: "MK",
-  ML: "ML", MN: "MC", MO: "MA", MR: "MR", MT: "MT", MU: "OM", MV: "MV",
-  MX: "MX", MY: "MY", MZ: "MZ", NG: "NE", NH: "VU", NI: "NG", NL: "NL",
-  NO: "NO", NP: "NP", NS: "SR", NU: "NI", NZ: "NZ", PA: "PY", PE: "PE",
-  PK: "PK", PL: "PL", PM: "PA", PO: "PT", PP: "PG", PS: "PW", PU: "GW",
-  QA: "QA", RO: "RO", RP: "PH", RS: "RU", RW: "RW", SA: "SA", SF: "ZA",
-  SG: "SN", SI: "SI", SL: "SL", SN: "SG", SO: "SO", SP: "ES", SR: "RS",
-  SS: "SS", SU: "SD", SW: "SE", SY: "SY", SZ: "CH", TD: "TT", TH: "TH",
-  TI: "TJ", TN: "TO", TO: "TG", TS: "TN", TT: "TL", TU: "TR", TX: "TM",
-  TZ: "TZ", UG: "UG", UK: "GB", UP: "UA", US: "US", UY: "UY", UZ: "UZ",
-  VE: "VE", VM: "VN", WA: "NA", WE: "PS", YM: "YE", ZA: "ZM", ZI: "ZW",
+  BX: "BN", BY: "BI",
+  CA: "CA", CB: "KH", CD: "TD", CF: "CG", CG: "CD",
+  CH: "CN",
+  CI: "CL", CM: "CM",
+  CN: "KM", // CN=Comoros→KM (not China)
+  CO: "CO", CS: "CR", CT: "CF", CU: "CU", CV: "CV", CY: "CY",
+  DA: "DK", DJ: "DJ",
+  DO: "DM", // DO=Dominica→DM (not Dominican Republic)
+  DR: "DO",
+  EC: "EC", EG: "EG", EI: "IE", EK: "GQ", EN: "EE", ER: "ER",
+  ES: "SV", ET: "ET", EZ: "CZ",
+  FI: "FI", FJ: "FJ", FR: "FR",
+  GA: "GM", GB: "GA", GG: "GE", GH: "GH", GJ: "GD", GM: "DE",
+  GR: "GR", GT: "GT", GV: "GN", GY: "GY",
+  HA: "HT", HN: "HN", HU: "HU",
+  IC: "IS", ID: "ID", IN: "IN", IQ: "IQ", IR: "IR", IS: "IL",
+  IT: "IT", IV: "CI", IZ: "IQ",
+  JA: "JP", JM: "JM", JO: "JO",
+  KE: "KE", KG: "KG", KN: "KP", KO: "KR", KS: "XK", KU: "KW", KZ: "KZ",
+  LA: "LA", LE: "LB", LG: "LV", LH: "LT", LI: "LR", LO: "SK",
+  LS: "LI", LT: "LS", LU: "LU", LY: "LY",
+  MA: "MG", MC: "MO", MD: "MD", MG: "MN", MI: "MW", MK: "MK",
+  ML: "ML", MN: "MC", MO: "MA", MP: "MU", MR: "MR", MT: "MT",
+  MU: "OM", MV: "MV", MX: "MX", MY: "MY", MZ: "MZ",
+  NA: "AN", // NA=Netherlands Antilles→AN (not Namibia)
+  NG: "NE", NH: "VU", NI: "NG", NL: "NL", NO: "NO", NP: "NP",
+  NS: "SR", NU: "NI", NZ: "NZ",
+  PA: "PY", PE: "PE", PK: "PK", PL: "PL", PM: "PA", PO: "PT",
+  PP: "PG", PS: "PW", PU: "GW",
+  QA: "QA",
+  RO: "RO", RP: "PH", RS: "RU", RW: "RW",
+  SA: "SA", SC: "KN", SE: "SC", SF: "ZA", SG: "SN", SI: "SI",
+  SL: "SL", SN: "SG", SO: "SO", SP: "ES", SR: "RS", SS: "SS",
+  SU: "SD", SW: "SE", SY: "SY", SZ: "CH",
+  TD: "TT", TH: "TH", TI: "TJ", TN: "TO", TO: "TG", TS: "TN",
+  TT: "TL", TU: "TR", TX: "TM", TZ: "TZ",
+  UG: "UG", UK: "GB", UP: "UA", US: "US", UY: "UY", UZ: "UZ",
+  VE: "VE", VM: "VN",
+  WA: "NA", // WA=Namibia→NA
+  WE: "PS", WS: "WS", WZ: "SZ",
+  YM: "YE",
+  ZA: "ZM", ZI: "ZW",
   GL: "GL", MF: "YT", RE: "RE",
 };
 
@@ -61,9 +91,9 @@ export default function LeafletMapComponent({
   const geoJsonLayerRef = useRef<LeafletGeoJSON | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Build a lookup from ISO2 code to country data.
-  // Falls back to using country_code directly if it's already ISO2
-  // (i.e. not found in FIPS_TO_ISO2).
+  // Build lookup from ISO2 → Country.
+  // Uses explicit FIPS_TO_ISO2 mapping; falls back to direct code only
+  // if not found (safe for codes that don't collide).
   const buildCountryLookup = (countries: Country[]) => {
     const lookup: Record<string, Country> = {};
     for (const c of countries) {
@@ -117,13 +147,11 @@ export default function LeafletMapComponent({
       const map = mapRef.current!;
       const lookup = buildCountryLookup(countries);
 
-      // Remove old GeoJSON layer
       if (geoJsonLayerRef.current) {
         geoJsonLayerRef.current.remove();
         geoJsonLayerRef.current = null;
       }
 
-      // Fetch (or use cached) world GeoJSON
       const geojson = await getGeoJson();
 
       const layer = L.geoJSON(geojson, {
@@ -135,9 +163,8 @@ export default function LeafletMapComponent({
             iso2 === (FIPS_TO_ISO2[selectedCountry.country_code] ?? selectedCountry.country_code);
 
           if (country) {
-            const color = getRiskColorHex(country.risk_score);
             return {
-              fillColor: color,
+              fillColor: getRiskColorHex(country.risk_score),
               fillOpacity: isSelected ? 0.85 : 0.6,
               color: isSelected ? "#ffffff" : "#1e2533",
               weight: isSelected ? 2 : 0.5,
@@ -177,9 +204,7 @@ export default function LeafletMapComponent({
 
           featureLayer.on("mouseout", () => {
             const el = featureLayer as unknown as { setStyle: (s: object) => void };
-            el.setStyle({
-              fillOpacity: country ? 0.6 : 0.4,
-            });
+            el.setStyle({ fillOpacity: country ? 0.6 : 0.4 });
             featureLayer.closeTooltip();
           });
 
@@ -195,7 +220,6 @@ export default function LeafletMapComponent({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [countries]);
 
-  // Re-render layer styles when selected country changes
   useEffect(() => {
     if (!geoJsonLayerRef.current || !mapRef.current) return;
     import("leaflet").then(() => {
