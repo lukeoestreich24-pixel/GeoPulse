@@ -10,6 +10,10 @@ import {
   fetchLiveFlights, type LiveFlight,
 } from "@/lib/travel";
 import { getSafetyColor, getSafetyLabel } from "@/lib/safety-client";
+import {
+  CONFLICT_ZONES, MILITARY_BASES, BASE_COLORS,
+  fetchMilitaryAircraft, type MilitaryAircraft,
+} from "@/lib/military";
 
 interface LeafletMapProps {
   countries: Country[];
@@ -108,14 +112,12 @@ function getStyle(
       ? { ...base, fillColor: getRiskColorHex(country.risk_score), fillOpacity: isSelected ? 0.9 : 0.65 }
       : { ...base, fillColor: "#1e2533", fillOpacity: 0.4 };
   }
-
   if (mode === "safety") {
     const score = safetyScores[iso2];
     return score !== undefined
       ? { ...base, fillColor: getSafetyColor(score), fillOpacity: isSelected ? 0.9 : 0.65 }
       : { ...base, fillColor: "#334155", fillOpacity: 0.5 };
   }
-
   if (mode === "travel") {
     const level = TRAVEL_ADVISORIES[iso2]?.level ?? 1;
     const fillColor = ADVISORY_COLORS[level];
@@ -126,7 +128,6 @@ function getStyle(
       return { fillColor, fillOpacity, color: "#f97316", weight: 2, dashArray: "5 4" };
     return { ...base, fillColor, fillOpacity };
   }
-
   return { ...base, fillColor: "#1e2533", fillOpacity: 0.4 };
 }
 
@@ -138,20 +139,17 @@ function getTooltip(
   featureName: string
 ): string {
   const name = country?.country_name ?? featureName ?? iso2;
-
   if (mode === "geopolitical") {
     return country
       ? `<div class="font-medium">${name}</div><div class="text-xs">Risk: ${country.risk_score}/100</div>`
       : `<div class="font-medium">${name}</div><div class="text-xs text-gray-500">No data</div>`;
   }
-
   if (mode === "safety") {
     const score = safetyScores[iso2];
     return score !== undefined
       ? `<div class="font-medium">${name}</div><div class="text-xs">Safety: ${score}/100 — ${getSafetyLabel(score)}</div>`
       : `<div class="font-medium">${name}</div><div class="text-xs text-gray-500">No data</div>`;
   }
-
   if (mode === "travel") {
     const advisory = TRAVEL_ADVISORIES[iso2];
     const level = advisory?.level ?? 1;
@@ -164,7 +162,6 @@ function getTooltip(
     }
     return html;
   }
-
   return `<div class="font-medium">${name}</div>`;
 }
 
@@ -177,11 +174,12 @@ export default function LeafletMapComponent({
 }: LeafletMapProps) {
   const mapRef = useRef<LeafletMap | null>(null);
   const geoJsonLayerRef = useRef<LeafletGeoJSON | null>(null);
+  const militaryLayerRef = useRef<LayerGroup | null>(null);
   const flightLayerRef = useRef<LayerGroup | null>(null);
   const flightIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Refs so event handlers always read latest values
+  // Refs — always current, safe to read inside async callbacks
   const modeRef = useRef(mode);
   const safetyRef = useRef(safetyScores);
   const countriesRef = useRef(countries);
@@ -191,6 +189,43 @@ export default function LeafletMapComponent({
   countriesRef.current = countries;
   selectedRef.current = selectedCountry;
 
+  // ── Military aircraft layer ────────────────────────────────────────────────
+  const renderMilAircraft = useCallback(async () => {
+    if (!mapRef.current) return;
+    const L = await import("leaflet");
+    const map = mapRef.current;
+
+    // Remove old aircraft layer
+    if (militaryLayerRef.current) {
+      militaryLayerRef.current.remove();
+      militaryLayerRef.current = null;
+    }
+
+    let aircraft: MilitaryAircraft[] = [];
+    try { aircraft = await fetchMilitaryAircraft(); } catch { return; }
+
+    const canvas = L.canvas({ padding: 0.5 });
+    const markers = aircraft.map((a) =>
+      L.circleMarker([a.lat, a.lng], {
+        renderer: canvas,
+        radius: 3,
+        color: "#fbbf24",
+        fillColor: "#fde68a",
+        fillOpacity: 0.9,
+        weight: 1,
+      }).bindTooltip(
+        `<div class="font-medium">${a.callsign}</div>
+         <div class="text-xs text-yellow-400">Military Aircraft</div>
+         ${a.country ? `<div class="text-xs text-gray-400">${a.country}</div>` : ""}
+         <div class="text-xs">Alt: ${Math.round(a.altitude)}ft &nbsp; ${Math.round(a.speed)}kts</div>`,
+        { className: "geopulse-tooltip", sticky: true }
+      )
+    );
+
+    militaryLayerRef.current = L.layerGroup(markers).addTo(map);
+  }, []);
+
+  // ── Travel mode flights ────────────────────────────────────────────────────
   const renderFlights = useCallback(async () => {
     if (!mapRef.current) return;
     const L = await import("leaflet");
@@ -215,14 +250,70 @@ export default function LeafletMapComponent({
     flightLayerRef.current = L.layerGroup(markers).addTo(map);
   }, []);
 
-  // Build the choropleth layer
+  // ── Military overlay (conflict zones + bases + aircraft) ──────────────────
+  const buildMilitaryOverlay = useCallback(async () => {
+    if (!mapRef.current) return;
+    const L = await import("leaflet");
+    const map = mapRef.current;
+
+    if (militaryLayerRef.current) { militaryLayerRef.current.remove(); militaryLayerRef.current = null; }
+
+    const layers: ReturnType<typeof L.circleMarker | typeof L.rectangle>[] = [];
+
+    // 1. Conflict zone rectangles
+    for (const zone of CONFLICT_ZONES) {
+      const [s, w, n, e] = zone.bounds;
+      const rect = L.rectangle([[s, w], [n, e]], {
+        color: zone.color,
+        weight: 1.5,
+        dashArray: zone.status === "active-war" ? "4 3" : "8 4",
+        fillColor: zone.color,
+        fillOpacity: zone.status === "active-war" ? 0.12 : 0.07,
+      }).bindTooltip(
+        `<div class="font-medium">${zone.name}</div>
+         <div class="text-xs" style="color:${zone.color}">${
+           zone.status === "active-war" ? "Active War" :
+           zone.status === "high-tension" ? "High Tension" : "Occupation"
+         }</div>
+         <div class="text-xs text-gray-400 mt-1">${zone.description}</div>`,
+        { className: "geopulse-tooltip", sticky: true }
+      );
+      layers.push(rect);
+    }
+
+    // 2. Military base markers
+    for (const base of MILITARY_BASES) {
+      const color = BASE_COLORS[base.operator];
+      const marker = L.circleMarker([base.lat, base.lng], {
+        radius: 5,
+        color: color,
+        fillColor: color,
+        fillOpacity: 0.85,
+        weight: 1.5,
+      }).bindTooltip(
+        `<div class="font-medium">${base.name}</div>
+         <div class="text-xs" style="color:${color}">${base.operator} — ${base.type}</div>
+         <div class="text-xs text-gray-400">${base.country}</div>
+         ${base.personnel ? `<div class="text-xs">Personnel: ~${base.personnel}</div>` : ""}`,
+        { className: "geopulse-tooltip", sticky: true }
+      );
+      layers.push(marker);
+    }
+
+    militaryLayerRef.current = L.layerGroup(layers).addTo(map);
+
+    // 3. Military aircraft (refreshed every 30s)
+    renderMilAircraft();
+  }, [renderMilAircraft]);
+
+  // ── Core: build choropleth ─────────────────────────────────────────────────
   const buildLayer = useCallback(async () => {
     if (!mapRef.current) return;
     const L = await import("leaflet");
     const map = mapRef.current;
 
-    // Tear down old layers
     if (geoJsonLayerRef.current) { geoJsonLayerRef.current.remove(); geoJsonLayerRef.current = null; }
+    if (militaryLayerRef.current) { militaryLayerRef.current.remove(); militaryLayerRef.current = null; }
     if (flightLayerRef.current) { flightLayerRef.current.remove(); flightLayerRef.current = null; }
     if (flightIntervalRef.current) { clearInterval(flightIntervalRef.current); flightIntervalRef.current = null; }
 
@@ -268,13 +359,18 @@ export default function LeafletMapComponent({
     layer.addTo(map);
     geoJsonLayerRef.current = layer;
 
-    if (currentMode === "travel") {
+    // Add mode-specific overlays on top
+    if (currentMode === "geopolitical") {
+      buildMilitaryOverlay();
+      // Refresh aircraft every 30s
+      flightIntervalRef.current = setInterval(renderMilAircraft, 30_000);
+    } else if (currentMode === "travel") {
       renderFlights();
       flightIntervalRef.current = setInterval(renderFlights, 60_000);
     }
-  }, [onCountryClick, renderFlights]);
+  }, [onCountryClick, buildMilitaryOverlay, renderMilAircraft, renderFlights]);
 
-  // Init map once
+  // ── Init map once ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
     import("leaflet").then((L) => {
@@ -298,15 +394,14 @@ export default function LeafletMapComponent({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Rebuild when data or mode changes
+  // Rebuild when data/mode changes
   useEffect(() => {
-    // For safety mode, wait until scores have loaded
     if (mode === "safety" && Object.keys(safetyScores).length === 0) return;
     buildLayer();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [countries, mode, safetyScores]);
 
-  // Re-style on selection change only
+  // Re-style on selection change
   useEffect(() => {
     if (!geoJsonLayerRef.current) return;
     const lookup = buildLookup(countries);
