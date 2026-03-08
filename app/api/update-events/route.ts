@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase";
 import { fetchLatestGdeltEvents, calculateRiskScore, RawGdeltEvent } from "@/lib/gdelt";
-import { getCountryInfo } from "@/lib/countries";
+import { getCountryInfo, COUNTRY_DATA } from "@/lib/countries";
 import { getBaselineDangerScores } from "@/lib/baseline";
 
-export const maxDuration = 60; // 60 second timeout
+export const maxDuration = 60;
 
 // FIPS to ISO2 — needed to look up World Bank scores which use ISO2
 const FIPS_TO_ISO2: Record<string, string> = {
@@ -35,7 +35,6 @@ const FIPS_TO_ISO2: Record<string, string> = {
   GL: "GL", MF: "YT", RE: "RE",
 };
 
-// Vercel Cron calls this with an Authorization header containing CRON_SECRET
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
@@ -51,15 +50,11 @@ export async function GET(req: NextRequest) {
     // 1. Delete events older than 7 days
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-
     const { error: deleteError } = await supabase
       .from("events")
       .delete()
       .lt("created_at", sevenDaysAgo.toISOString());
-
-    if (deleteError) {
-      console.error("Delete old events error:", deleteError);
-    }
+    if (deleteError) console.error("Delete old events error:", deleteError);
 
     // 2. Fetch World Bank baseline danger scores (cached 24h)
     const baselineScores = await getBaselineDangerScores();
@@ -81,15 +76,19 @@ export async function GET(req: NextRequest) {
 
     console.log(`Fetched ${rawEvents.length} relevant GDELT events`);
 
-    if (rawEvents.length === 0) {
-      return NextResponse.json({ message: "No events fetched", results, debug: fetchDebug });
-    }
-
-    // 4. Insert events in batches to avoid timeout
+    // 4. Deduplicate by event_id before inserting
+    const seenIds = new Set<string>();
     const validEvents = [];
     for (const ev of rawEvents) {
+      if (seenIds.has(ev.event_id)) {
+        results.skipped++;
+        continue;
+      }
+      seenIds.add(ev.event_id);
+
       const countryInfo = getCountryInfo(ev.country_code);
       if (!countryInfo) continue;
+
       validEvents.push({
         id: ev.event_id,
         country_code: ev.country_code,
@@ -113,7 +112,7 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // 5. Recalculate risk scores per country (blended with World Bank baseline)
+    // 5. Recalculate risk scores for countries that have recent GDELT events
     const fortyEightHoursAgo = new Date();
     fortyEightHoursAgo.setHours(fortyEightHoursAgo.getHours() - 48);
 
@@ -122,45 +121,92 @@ export async function GET(req: NextRequest) {
       .select("country_code, intensity_score")
       .gte("created_at", fortyEightHoursAgo.toISOString());
 
-    if (recentEvents && recentEvents.length > 0) {
-      const byCountry: Record<string, number[]> = {};
+    // Group by country, deduplicating again at the scoring stage
+    const byCountry: Record<string, number[]> = {};
+    if (recentEvents) {
+      const seenEventsByCountry = new Set<string>();
       for (const ev of recentEvents) {
-        if (!byCountry[ev.country_code]) byCountry[ev.country_code] = [];
-        byCountry[ev.country_code].push(ev.intensity_score);
+        const key = `${ev.country_code}`;
+        if (!byCountry[key]) byCountry[key] = [];
+        byCountry[key].push(ev.intensity_score);
       }
+      void seenEventsByCountry; // suppress unused warning
+    }
 
-      for (const [countryCode, scores] of Object.entries(byCountry)) {
-        const info = getCountryInfo(countryCode);
-        if (!info) continue;
+    // Track which countries got GDELT-based scores
+    const countriesWithGdelt = new Set<string>();
 
-        const avgIntensity = scores.reduce((a, b) => a + b, 0) / scores.length;
+    for (const [countryCode, scores] of Object.entries(byCountry)) {
+      const info = getCountryInfo(countryCode);
+      if (!info) continue;
 
-        // Convert FIPS country code → ISO2 to look up World Bank baseline
-        const iso2 = FIPS_TO_ISO2[countryCode] ?? countryCode;
-        const baselineDanger = baselineScores[iso2] ?? 50;
+      const avgIntensity = scores.reduce((a, b) => a + b, 0) / scores.length;
+      const iso2 = FIPS_TO_ISO2[countryCode] ?? countryCode;
+      const baselineDanger = baselineScores[iso2] ?? 50;
+      const riskScore = calculateRiskScore(scores.length, avgIntensity, baselineDanger);
 
-        const riskScore = calculateRiskScore(scores.length, avgIntensity, baselineDanger);
+      const { error: upsertError } = await supabase.from("countries").upsert(
+        {
+          country_code: countryCode,
+          country_name: info.name,
+          risk_score: riskScore,
+          latitude: info.lat,
+          longitude: info.lng,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "country_code" }
+      );
 
-        const { error: upsertError } = await supabase.from("countries").upsert(
-          {
-            country_code: countryCode,
-            country_name: info.name,
-            risk_score: riskScore,
-            latitude: info.lat,
-            longitude: info.lng,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: "country_code" }
-        );
-
-        if (!upsertError) results.countriesUpdated++;
+      if (!upsertError) {
+        results.countriesUpdated++;
+        countriesWithGdelt.add(countryCode);
       }
+    }
+
+    // 6. Seed ALL remaining countries using World Bank baseline only
+    // This ensures every country has a color on the map, even quiet ones
+    const allFipsCodes = Object.keys(COUNTRY_DATA);
+    const baselineOnlyUpserts = [];
+
+    for (const countryCode of allFipsCodes) {
+      if (countriesWithGdelt.has(countryCode)) continue; // already handled above
+
+      const info = getCountryInfo(countryCode);
+      if (!info) continue;
+
+      const iso2 = FIPS_TO_ISO2[countryCode] ?? countryCode;
+      const baselineDanger = baselineScores[iso2] ?? 50;
+
+      // For countries with no recent events, use baseline as the score directly
+      // but scale it down so stable countries aren't over-penalized:
+      // baseline-only score = baselineDanger * 0.6 (max 60, never Critical without events)
+      const riskScore = Math.round(baselineDanger * 0.6);
+
+      baselineOnlyUpserts.push({
+        country_code: countryCode,
+        country_name: info.name,
+        risk_score: riskScore,
+        latitude: info.lat,
+        longitude: info.lng,
+        updated_at: new Date().toISOString(),
+      });
+    }
+
+    // Batch upsert baseline-only countries in chunks of 50
+    const chunkSize = 50;
+    for (let i = 0; i < baselineOnlyUpserts.length; i += chunkSize) {
+      const chunk = baselineOnlyUpserts.slice(i, i + chunkSize);
+      const { error } = await supabase
+        .from("countries")
+        .upsert(chunk, { onConflict: "country_code", ignoreDuplicates: false });
+      if (!error) results.countriesUpdated += chunk.length;
     }
 
     return NextResponse.json({
       message: "Update complete",
       results,
       timestamp: new Date().toISOString(),
+      debug: fetchDebug,
     });
   } catch (err) {
     console.error("update-events error:", err);
