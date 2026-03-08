@@ -1,39 +1,36 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useCallback } from "react";
 import { Country, getRiskColorHex } from "@/types";
-import type { Map as LeafletMap, GeoJSON as LeafletGeoJSON } from "leaflet";
+import type { Map as LeafletMap, GeoJSON as LeafletGeoJSON, LayerGroup } from "leaflet";
 import type { GeoJsonObject } from "geojson";
+import { MapMode } from "./AppShell";
+import {
+  TRAVEL_ADVISORIES, AIRSPACE_CLOSURES, ADVISORY_COLORS, ADVISORY_LABELS,
+  fetchLiveFlights, type LiveFlight,
+} from "@/lib/travel";
+import { getSafetyColor, getSafetyLabel } from "@/lib/safety-client";
 
 interface LeafletMapProps {
   countries: Country[];
   onCountryClick: (country: Country) => void;
   selectedCountry: Country | null;
+  mode: MapMode;
+  safetyScores: Record<string, number>;
 }
 
-// FIPS to ISO2 mapping for GeoJSON matching.
-// Every FIPS code must be explicitly listed here — do NOT rely on the
-// fallback for codes that collide with another country's ISO2 code.
-// Known collisions that caused wrong tooltips:
-//   BD (Bermuda FIPS) collides with BD (Bangladesh ISO2)  → must map to BM
-//   CN (Comoros FIPS) collides with CN (China ISO2)       → must map to KM
-//   DO (Dominica FIPS) collides with DO (Dom. Rep ISO2)   → must map to DM
-//   NA (Neth. Antilles FIPS) collides with NA (Namibia ISO2) → must map to AN
+// FIPS to ISO2 — covers all known collision cases explicitly
 const FIPS_TO_ISO2: Record<string, string> = {
   AF: "AF", AG: "DZ", AJ: "AZ", AL: "AL", AM: "AM", AO: "AO", AR: "AR",
   AS: "AU", AU: "AT",
-  BA: "BH", BB: "BB", BC: "BW", BD: "BM", // BD=Bermuda→BM (not Bangladesh)
+  BA: "BH", BB: "BB", BC: "BW", BD: "BM",
   BE: "BE", BF: "BS", BG: "BD", BH: "BZ", BK: "BA",
   BL: "BO", BM: "MM", BN: "BJ", BO: "BY", BR: "BR", BT: "BT", BU: "BG",
   BX: "BN", BY: "BI",
-  CA: "CA", CB: "KH", CD: "TD", CF: "CG", CG: "CD",
-  CH: "CN",
-  CI: "CL", CM: "CM",
-  CN: "KM", // CN=Comoros→KM (not China)
+  CA: "CA", CB: "KH", CD: "TD", CF: "CG", CG: "CD", CH: "CN",
+  CI: "CL", CM: "CM", CN: "KM",
   CO: "CO", CS: "CR", CT: "CF", CU: "CU", CV: "CV", CY: "CY",
-  DA: "DK", DJ: "DJ",
-  DO: "DM", // DO=Dominica→DM (not Dominican Republic)
-  DR: "DO",
+  DA: "DK", DJ: "DJ", DO: "DM", DR: "DO",
   EC: "EC", EG: "EG", EI: "IE", EK: "GQ", EN: "EE", ER: "ER",
   ES: "SV", ET: "ET", EZ: "CZ",
   FI: "FI", FJ: "FJ", FR: "FR",
@@ -49,7 +46,7 @@ const FIPS_TO_ISO2: Record<string, string> = {
   MA: "MG", MC: "MO", MD: "MD", MG: "MN", MI: "MW", MK: "MK",
   ML: "ML", MN: "MC", MO: "MA", MP: "MU", MR: "MR", MT: "MT",
   MU: "OM", MV: "MV", MX: "MX", MY: "MY", MZ: "MZ",
-  NA: "AN", // NA=Netherlands Antilles→AN (not Namibia)
+  NA: "AN",
   NG: "NE", NH: "VU", NI: "NG", NL: "NL", NO: "NO", NP: "NP",
   NS: "SR", NU: "NI", NZ: "NZ",
   PA: "PY", PE: "PE", PK: "PK", PL: "PL", PM: "PA", PO: "PT",
@@ -63,16 +60,14 @@ const FIPS_TO_ISO2: Record<string, string> = {
   TT: "TL", TU: "TR", TX: "TM", TZ: "TZ",
   UG: "UG", UK: "GB", UP: "UA", US: "US", UY: "UY", UZ: "UZ",
   VE: "VE", VM: "VN",
-  WA: "NA", // WA=Namibia→NA
-  WE: "PS", WS: "WS", WZ: "SZ",
+  WA: "NA", WE: "PS", WS: "WS", WZ: "SZ",
   YM: "YE",
   ZA: "ZM", ZI: "ZW",
   GL: "GL", MF: "YT", RE: "RE",
 };
 
-// Cache GeoJSON so we don't re-fetch on every render
+// GeoJSON cache
 let cachedGeoJson: GeoJsonObject | null = null;
-
 async function getGeoJson(): Promise<GeoJsonObject> {
   if (cachedGeoJson) return cachedGeoJson;
   const res = await fetch(
@@ -82,27 +77,38 @@ async function getGeoJson(): Promise<GeoJsonObject> {
   return cachedGeoJson;
 }
 
+// Build FIPS → Country lookup
+function buildCountryLookup(countries: Country[]): Record<string, Country> {
+  const lookup: Record<string, Country> = {};
+  for (const c of countries) {
+    const iso2 = FIPS_TO_ISO2[c.country_code] ?? c.country_code;
+    lookup[iso2] = c;
+  }
+  return lookup;
+}
+
+// Build ISO2 set for airspace closures
+const CLOSED_ISO2 = new Set(
+  AIRSPACE_CLOSURES.filter((c) => c.severity === "closed").map((c) => c.iso2)
+);
+const RESTRICTED_ISO2 = new Set(
+  AIRSPACE_CLOSURES.filter((c) => c.severity === "restricted").map((c) => c.iso2)
+);
+
 export default function LeafletMapComponent({
   countries,
   onCountryClick,
   selectedCountry,
+  mode,
+  safetyScores,
 }: LeafletMapProps) {
   const mapRef = useRef<LeafletMap | null>(null);
   const geoJsonLayerRef = useRef<LeafletGeoJSON | null>(null);
+  const flightLayerRef = useRef<LayerGroup | null>(null);
+  const flightIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Build lookup from ISO2 → Country.
-  // Uses explicit FIPS_TO_ISO2 mapping; falls back to direct code only
-  // if not found (safe for codes that don't collide).
-  const buildCountryLookup = (countries: Country[]) => {
-    const lookup: Record<string, Country> = {};
-    for (const c of countries) {
-      const iso2 = FIPS_TO_ISO2[c.country_code] ?? c.country_code;
-      lookup[iso2] = c;
-    }
-    return lookup;
-  };
-
+  // ── Initialise map once ────────────────────────────────────────────────────
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
 
@@ -133,6 +139,7 @@ export default function LeafletMapComponent({
     });
 
     return () => {
+      if (flightIntervalRef.current) clearInterval(flightIntervalRef.current);
       if (mapRef.current) {
         mapRef.current.remove();
         mapRef.current = null;
@@ -140,71 +147,99 @@ export default function LeafletMapComponent({
     };
   }, []);
 
+  // ── Render flight dots (travel mode only) ─────────────────────────────────
+  const renderFlights = useCallback(async () => {
+    if (!mapRef.current) return;
+    import("leaflet").then(async (L) => {
+      const map = mapRef.current!;
+
+      if (flightLayerRef.current) {
+        flightLayerRef.current.remove();
+        flightLayerRef.current = null;
+      }
+
+      let flights: LiveFlight[] = [];
+      try {
+        flights = await fetchLiveFlights();
+      } catch {
+        return;
+      }
+
+      const canvas = L.canvas({ padding: 0.5 });
+      const markers = flights.map((f) =>
+        L.circleMarker([f.latitude, f.longitude], {
+          renderer: canvas,
+          radius: 1.5,
+          color: "#60a5fa",
+          fillColor: "#93c5fd",
+          fillOpacity: 0.85,
+          weight: 0,
+        }).bindTooltip(
+          `<div class="font-medium">${f.callsign || f.icao24}</div>
+           <div class="text-xs text-gray-400">${f.origin_country}</div>
+           <div class="text-xs">Alt: ${Math.round(f.altitude)}m</div>`,
+          { className: "geopulse-tooltip", sticky: true }
+        )
+      );
+
+      const layer = L.layerGroup(markers);
+      layer.addTo(map);
+      flightLayerRef.current = layer;
+    });
+  }, []);
+
+  // ── Build/rebuild choropleth when countries, mode, or safetyScores change ──
   useEffect(() => {
-    if (!mapRef.current || countries.length === 0) return;
+    if (!mapRef.current) return;
+
+    // Wait for safety scores before rendering safety mode
+    if (mode === "safety" && Object.keys(safetyScores).length === 0) return;
 
     import("leaflet").then(async (L) => {
       const map = mapRef.current!;
       const lookup = buildCountryLookup(countries);
 
+      // Remove previous layers
       if (geoJsonLayerRef.current) {
         geoJsonLayerRef.current.remove();
         geoJsonLayerRef.current = null;
+      }
+      if (flightLayerRef.current) {
+        flightLayerRef.current.remove();
+        flightLayerRef.current = null;
+      }
+      if (flightIntervalRef.current) {
+        clearInterval(flightIntervalRef.current);
+        flightIntervalRef.current = null;
       }
 
       const geojson = await getGeoJson();
 
       const layer = L.geoJSON(geojson, {
         style: (feature) => {
-          const iso2 = feature?.properties?.["ISO3166-1-Alpha-2"];
-          const country = lookup[iso2];
-          const isSelected =
-            selectedCountry &&
-            iso2 === (FIPS_TO_ISO2[selectedCountry.country_code] ?? selectedCountry.country_code);
-
-          if (country) {
-            return {
-              fillColor: getRiskColorHex(country.risk_score),
-              fillOpacity: isSelected ? 0.85 : 0.6,
-              color: isSelected ? "#ffffff" : "#1e2533",
-              weight: isSelected ? 2 : 0.5,
-            };
-          }
-          return {
-            fillColor: "#1e2533",
-            fillOpacity: 0.4,
-            color: "#0f1117",
-            weight: 0.5,
-          };
+          const iso2: string = feature?.properties?.["ISO3166-1-Alpha-2"] ?? "";
+          return getFeatureStyle(iso2, lookup, mode, safetyScores, selectedCountry);
         },
         onEachFeature: (feature, featureLayer) => {
-          const iso2 = feature?.properties?.["ISO3166-1-Alpha-2"];
-          const country = lookup[iso2];
+          const iso2: string = feature?.properties?.["ISO3166-1-Alpha-2"] ?? "";
+          const lookup2 = buildCountryLookup(countries);
+          const country = lookup2[iso2];
 
           featureLayer.on("mouseover", () => {
             const el = featureLayer as unknown as { setStyle: (s: object) => void };
-            if (country) {
-              el.setStyle({ fillOpacity: 0.85 });
-              featureLayer
-                .bindTooltip(
-                  `<div class="font-medium">${country.country_name}</div><div class="text-xs">Risk: ${country.risk_score}/100</div>`,
-                  { className: "geopulse-tooltip", sticky: true }
-                )
-                .openTooltip();
-            } else {
-              el.setStyle({ fillOpacity: 0.6 });
-              featureLayer
-                .bindTooltip(
-                  `<div class="font-medium">${feature.properties?.name || iso2}</div><div class="text-xs text-gray-500">No data</div>`,
-                  { className: "geopulse-tooltip", sticky: true }
-                )
-                .openTooltip();
-            }
+            el.setStyle({ fillOpacity: 0.9 });
+            featureLayer
+              .bindTooltip(buildTooltip(iso2, country, mode, safetyScores, feature), {
+                className: "geopulse-tooltip",
+                sticky: true,
+              })
+              .openTooltip();
           });
 
           featureLayer.on("mouseout", () => {
             const el = featureLayer as unknown as { setStyle: (s: object) => void };
-            el.setStyle({ fillOpacity: country ? 0.6 : 0.4 });
+            const style = getFeatureStyle(iso2, lookup2, mode, safetyScores, selectedCountry);
+            el.setStyle({ fillOpacity: style.fillOpacity });
             featureLayer.closeTooltip();
           });
 
@@ -216,51 +251,34 @@ export default function LeafletMapComponent({
 
       layer.addTo(map);
       geoJsonLayerRef.current = layer;
+
+      // Travel mode: load flights + start refresh interval
+      if (mode === "travel") {
+        renderFlights();
+        flightIntervalRef.current = setInterval(renderFlights, 60_000);
+      }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [countries]);
+  }, [countries, mode, safetyScores]);
 
+  // ── Re-style on selection change ──────────────────────────────────────────
   useEffect(() => {
-    if (!geoJsonLayerRef.current || !mapRef.current) return;
-    import("leaflet").then(() => {
-      geoJsonLayerRef.current?.resetStyle();
-      geoJsonLayerRef.current?.eachLayer((featureLayer) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const feature = (featureLayer as any).feature;
-        const iso2 = feature?.properties?.["ISO3166-1-Alpha-2"];
-        const lookup = buildCountryLookup(countries);
-        const country = lookup[iso2];
-        const isSelected =
-          selectedCountry &&
-          iso2 === (FIPS_TO_ISO2[selectedCountry.country_code] ?? selectedCountry.country_code);
-
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (featureLayer as any).setStyle(
-          country
-            ? {
-                fillColor: getRiskColorHex(country.risk_score),
-                fillOpacity: isSelected ? 0.85 : 0.6,
-                color: isSelected ? "#ffffff" : "#1e2533",
-                weight: isSelected ? 2 : 0.5,
-              }
-            : {
-                fillColor: "#1e2533",
-                fillOpacity: 0.4,
-                color: "#0f1117",
-                weight: 0.5,
-              }
-        );
-      });
+    if (!geoJsonLayerRef.current) return;
+    geoJsonLayerRef.current.eachLayer((featureLayer) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const feature = (featureLayer as any).feature;
+      const iso2: string = feature?.properties?.["ISO3166-1-Alpha-2"] ?? "";
+      const lookup = buildCountryLookup(countries);
+      const style = getFeatureStyle(iso2, lookup, mode, safetyScores, selectedCountry);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (featureLayer as any).setStyle(style);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCountry]);
 
   return (
     <>
-      <link
-        rel="stylesheet"
-        href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-      />
+      <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
       <style>{`
         .geopulse-tooltip {
           background: #161b27;
@@ -286,4 +304,124 @@ export default function LeafletMapComponent({
       <div ref={containerRef} className="w-full h-full" />
     </>
   );
+}
+
+// ── Style helper ──────────────────────────────────────────────────────────────
+
+function getFeatureStyle(
+  iso2: string,
+  lookup: Record<string, Country>,
+  mode: MapMode,
+  safetyScores: Record<string, number>,
+  selectedCountry: Country | null
+) {
+  const country = lookup[iso2];
+  const isSelected =
+    selectedCountry != null &&
+    iso2 === (FIPS_TO_ISO2[selectedCountry.country_code] ?? selectedCountry.country_code);
+
+  const base = { weight: isSelected ? 2 : 0.5, color: isSelected ? "#ffffff" : "#1e2533" };
+
+  if (mode === "geopolitical") {
+    if (country) {
+      return {
+        ...base,
+        fillColor: getRiskColorHex(country.risk_score),
+        fillOpacity: isSelected ? 0.9 : 0.65,
+      };
+    }
+    return { ...base, fillColor: "#1e2533", fillOpacity: 0.4 };
+  }
+
+  if (mode === "safety") {
+    const score = safetyScores[iso2];
+    if (score !== undefined) {
+      return {
+        ...base,
+        fillColor: getSafetyColor(score),
+        fillOpacity: isSelected ? 0.9 : 0.65,
+      };
+    }
+    return { ...base, fillColor: "#1e2533", fillOpacity: 0.4 };
+  }
+
+  if (mode === "travel") {
+    const advisory = TRAVEL_ADVISORIES[iso2];
+    const level = advisory?.level ?? 1;
+    const fillColor = ADVISORY_COLORS[level];
+    const fillOpacity = level === 1 ? 0.35 : isSelected ? 0.9 : 0.65;
+
+    // Airspace closures get a thick dashed border
+    if (CLOSED_ISO2.has(iso2)) {
+      return {
+        fillColor,
+        fillOpacity,
+        color: "#ef4444",
+        weight: 2.5,
+        dashArray: "6 3",
+      };
+    }
+    if (RESTRICTED_ISO2.has(iso2)) {
+      return {
+        fillColor,
+        fillOpacity,
+        color: "#f97316",
+        weight: 2,
+        dashArray: "5 4",
+      };
+    }
+
+    return { ...base, fillColor, fillOpacity };
+  }
+
+  return { ...base, fillColor: "#1e2533", fillOpacity: 0.4 };
+}
+
+// ── Tooltip builder ───────────────────────────────────────────────────────────
+
+function buildTooltip(
+  iso2: string,
+  country: Country | undefined,
+  mode: MapMode,
+  safetyScores: Record<string, number>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  feature: any
+): string {
+  const name = country?.country_name ?? feature?.properties?.name ?? iso2;
+
+  if (mode === "geopolitical") {
+    if (country) {
+      return `<div class="font-medium">${name}</div><div class="text-xs">Risk: ${country.risk_score}/100</div>`;
+    }
+    return `<div class="font-medium">${name}</div><div class="text-xs text-gray-500">No data</div>`;
+  }
+
+  if (mode === "safety") {
+    const score = safetyScores[iso2];
+    if (score !== undefined) {
+      return `<div class="font-medium">${name}</div>
+              <div class="text-xs">Safety: ${score}/100 — ${getSafetyLabel(score)}</div>`;
+    }
+    return `<div class="font-medium">${name}</div><div class="text-xs text-gray-500">No data</div>`;
+  }
+
+  if (mode === "travel") {
+    const advisory = TRAVEL_ADVISORIES[iso2];
+    const level = advisory?.level ?? 1;
+    const levelLabel = ADVISORY_LABELS[level];
+    const closure = AIRSPACE_CLOSURES.find((c) => c.iso2 === iso2);
+
+    let html = `<div class="font-medium">${name}</div>
+                <div class="text-xs">Level ${level}: ${levelLabel}</div>`;
+    if (advisory?.reason) {
+      html += `<div class="text-xs text-gray-400">${advisory.reason}</div>`;
+    }
+    if (closure) {
+      const badge = closure.severity === "closed" ? "🚫 Airspace Closed" : "⚠️ Airspace Restricted";
+      html += `<div class="text-xs mt-1">${badge}: ${closure.reason}</div>`;
+    }
+    return html;
+  }
+
+  return `<div class="font-medium">${name}</div>`;
 }
