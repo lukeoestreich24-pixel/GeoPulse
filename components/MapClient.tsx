@@ -46,7 +46,7 @@ export default function MapClient({ initialCountries, mode }: MapClientProps) {
   // Fetch World Bank safety scores when switching to safety mode
   useEffect(() => {
     if (mode !== "safety") return;
-    if (Object.keys(safetyScores).length > 0) return; // already loaded
+    if (Object.keys(safetyScores).length > 0) return;
     setLoadingSafety(true);
     getSafetyScores()
       .then(setSafetyScores)
@@ -81,7 +81,6 @@ export default function MapClient({ initialCountries, mode }: MapClientProps) {
 
   return (
     <div className="relative w-full h-full">
-      {/* Loading overlay for safety data */}
       {loadingSafety && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1001] bg-[#161b27] border border-[#1e2533] rounded-lg px-4 py-2 text-xs text-gray-400 flex items-center gap-2">
           <div className="animate-spin h-3 w-3 border border-blue-500 border-t-transparent rounded-full" />
@@ -89,7 +88,13 @@ export default function MapClient({ initialCountries, mode }: MapClientProps) {
         </div>
       )}
 
+      {/*
+        key={mode} forces LeafletMap to fully unmount and remount on every tab
+        switch. This guarantees the map re-initialises with the correct mode
+        rather than trying to patch an existing Leaflet instance in place.
+      */}
       <LeafletMap
+        key={mode}
         countries={countries}
         onCountryClick={handleCountryClick}
         selectedCountry={selectedCountry}
@@ -97,7 +102,6 @@ export default function MapClient({ initialCountries, mode }: MapClientProps) {
         safetyScores={safetyScores}
       />
 
-      {/* Mode legend */}
       <ModeLegend mode={mode} />
 
       <CountrySidebar
@@ -117,8 +121,6 @@ export default function MapClient({ initialCountries, mode }: MapClientProps) {
     </div>
   );
 }
-
-// ── Inline legend component ─────────────────────────────────────────────────
 
 function ModeLegend({ mode }: { mode: MapMode }) {
   if (mode === "geopolitical") {
