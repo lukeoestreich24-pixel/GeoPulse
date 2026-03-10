@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { Country, GdeltEvent } from "@/types";
 import { MapMode } from "./AppShell";
 import CountrySidebar from "./CountrySidebar";
@@ -33,6 +33,12 @@ export default function MapClient({ initialCountries, mode }: MapClientProps) {
   const [safetyScores, setSafetyScores] = useState<Record<string, number>>({});
   const [loadingSafety, setLoadingSafety] = useState(false);
 
+  // Tail number search
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResult, setSearchResult] = useState<"found" | "not-found" | null>(null);
+  const [committedSearch, setCommittedSearch] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
   useEffect(() => {
     fetch("/api/countries")
       .then((r) => r.json())
@@ -46,6 +52,15 @@ export default function MapClient({ initialCountries, mode }: MapClientProps) {
     setLoadingSafety(true);
     getSafetyScores().then(setSafetyScores).finally(() => setLoadingSafety(false));
   }, [mode, safetyScores]);
+
+  // Reset search when leaving travel tab
+  useEffect(() => {
+    if (mode !== "travel") {
+      setSearchQuery("");
+      setCommittedSearch("");
+      setSearchResult(null);
+    }
+  }, [mode]);
 
   const handleCountryClick = useCallback(async (country: Country) => {
     setSelectedCountry(country);
@@ -65,12 +80,74 @@ export default function MapClient({ initialCountries, mode }: MapClientProps) {
     setTimeout(() => { setSelectedCountry(null); setEvents([]); }, 300);
   }, []);
 
+  const handleSearch = useCallback((e: React.FormEvent) => {
+    e.preventDefault();
+    const q = searchQuery.trim().toUpperCase();
+    if (!q) return;
+    setCommittedSearch(q);
+    setSearchResult(null); // reset — LeafletMap will report back
+  }, [searchQuery]);
+
+  const handleSearchResult = useCallback((found: boolean) => {
+    setSearchResult(found ? "found" : "not-found");
+  }, []);
+
+  const clearSearch = useCallback(() => {
+    setSearchQuery("");
+    setCommittedSearch("");
+    setSearchResult(null);
+    searchInputRef.current?.focus();
+  }, []);
+
   return (
     <div className="relative w-full h-full">
       {loadingSafety && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1001] bg-[#161b27] border border-[#1e2533] rounded-lg px-4 py-2 text-xs text-gray-400 flex items-center gap-2">
           <div className="animate-spin h-3 w-3 border border-blue-500 border-t-transparent rounded-full" />
           Loading safety data...
+        </div>
+      )}
+
+      {/* Tail number search — travel tab only */}
+      {mode === "travel" && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1001] flex flex-col items-center gap-1">
+          <form onSubmit={handleSearch} className="flex items-center gap-2 bg-[#161b27] border border-[#1e2533] rounded-lg px-3 py-2 shadow-lg">
+            <svg className="w-3.5 h-3.5 text-gray-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z" />
+            </svg>
+            <input
+              ref={searchInputRef}
+              type="text"
+              value={searchQuery}
+              onChange={(e) => { setSearchQuery(e.target.value.toUpperCase()); setSearchResult(null); }}
+              placeholder="Search tail number / callsign…"
+              className="bg-transparent text-gray-200 text-xs placeholder-gray-600 outline-none w-52"
+              spellCheck={false}
+            />
+            {searchQuery && (
+              <button type="button" onClick={clearSearch} className="text-gray-600 hover:text-gray-400 transition-colors">
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+            <button
+              type="submit"
+              className="text-xs bg-blue-600 hover:bg-blue-500 text-white px-2.5 py-1 rounded transition-colors flex-shrink-0"
+            >
+              Find
+            </button>
+          </form>
+          {searchResult === "not-found" && (
+            <div className="text-xs text-red-400 bg-[#161b27]/90 border border-red-900/40 rounded px-2.5 py-1">
+              &ldquo;{committedSearch}&rdquo; not found in current flight data
+            </div>
+          )}
+          {searchResult === "found" && (
+            <div className="text-xs text-green-400 bg-[#161b27]/90 border border-green-900/40 rounded px-2.5 py-1">
+              Found &ldquo;{committedSearch}&rdquo; — panned to location
+            </div>
+          )}
         </div>
       )}
 
@@ -81,6 +158,8 @@ export default function MapClient({ initialCountries, mode }: MapClientProps) {
         selectedCountry={selectedCountry}
         mode={mode}
         safetyScores={safetyScores}
+        searchCallsign={committedSearch}
+        onSearchResult={handleSearchResult}
       />
 
       <ModeLegend mode={mode} />
@@ -107,10 +186,9 @@ function ModeLegend({ mode }: { mode: MapMode }) {
           { color: "#eab308", label: "Occupation / Disputed" },
           { color: "#a855f7", label: "Heavily Sanctioned" },
           { color: "#22c55e", label: "Stable" },
-          ].map(({ color, label }) => (
+        ].map(({ color, label }) => (
           <div key={label} className="flex items-center gap-2 py-0.5">
-            <span className="w-2.5 h-2.5 rounded-sm inline-block flex-shrink-0"
-              style={{ backgroundColor: color }} />
+            <span className="w-2.5 h-2.5 rounded-sm inline-block flex-shrink-0" style={{ backgroundColor: color }} />
             <span className="text-gray-300">{label}</span>
           </div>
         ))}
