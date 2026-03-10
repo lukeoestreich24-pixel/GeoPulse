@@ -12,6 +12,7 @@ import {
 import { getSafetyColor, getSafetyLabel } from "@/lib/safety-client";
 import {
   CONFLICT_ZONES, MILITARY_BASES, BASE_COLORS,
+  COUNTRY_CONFLICT_STATUS, STATUS_COLORS, STATUS_FILL_OPACITY, STATUS_LABELS,
   fetchMilitaryAircraft, type MilitaryAircraft,
 } from "@/lib/military";
 
@@ -25,74 +26,50 @@ interface LeafletMapProps {
 
 const FIPS_TO_ISO2: Record<string, string> = {
   AF: "AF", AG: "DZ", AJ: "AZ", AL: "AL", AM: "AM", AO: "AO", AR: "AR",
-  AS: "AU", AU: "AT",
-  BA: "BH", BB: "BB", BC: "BW", BD: "BM",
-  BE: "BE", BF: "BS", BG: "BD", BH: "BZ", BK: "BA",
-  BL: "BO", BM: "MM", BN: "BJ", BO: "BY", BR: "BR", BT: "BT", BU: "BG",
-  BX: "BN", BY: "BI",
-  CA: "CA", CB: "KH", CD: "TD", CF: "CG", CG: "CD", CH: "CN",
-  CI: "CL", CM: "CM", CN: "KM",
-  CO: "CO", CS: "CR", CT: "CF", CU: "CU", CV: "CV", CY: "CY",
-  DA: "DK", DJ: "DJ", DO: "DM", DR: "DO",
-  EC: "EC", EG: "EG", EI: "IE", EK: "GQ", EN: "EE", ER: "ER",
-  ES: "SV", ET: "ET", EZ: "CZ",
-  FI: "FI", FJ: "FJ", FR: "FR",
-  GA: "GM", GB: "GA", GG: "GE", GH: "GH", GJ: "GD", GM: "DE",
-  GR: "GR", GT: "GT", GV: "GN", GY: "GY",
-  HA: "HT", HN: "HN", HU: "HU",
-  IC: "IS", ID: "ID", IN: "IN", IQ: "IQ", IR: "IR", IS: "IL",
-  IT: "IT", IV: "CI", IZ: "IQ",
-  JA: "JP", JM: "JM", JO: "JO",
+  AS: "AU", AU: "AT", BA: "BH", BB: "BB", BC: "BW", BD: "BM",
+  BE: "BE", BF: "BS", BG: "BD", BH: "BZ", BK: "BA", BL: "BO", BM: "MM",
+  BN: "BJ", BO: "BY", BR: "BR", BT: "BT", BU: "BG", BX: "BN", BY: "BI",
+  CA: "CA", CB: "KH", CD: "TD", CF: "CG", CG: "CD", CH: "CN", CI: "CL",
+  CM: "CM", CN: "KM", CO: "CO", CS: "CR", CT: "CF", CU: "CU", CV: "CV",
+  CY: "CY", DA: "DK", DJ: "DJ", DO: "DM", DR: "DO", EC: "EC", EG: "EG",
+  EI: "IE", EK: "GQ", EN: "EE", ER: "ER", ES: "SV", ET: "ET", EZ: "CZ",
+  FI: "FI", FJ: "FJ", FR: "FR", GA: "GM", GB: "GA", GG: "GE", GH: "GH",
+  GJ: "GD", GM: "DE", GR: "GR", GT: "GT", GV: "GN", GY: "GY", HA: "HT",
+  HN: "HN", HU: "HU", IC: "IS", ID: "ID", IN: "IN", IQ: "IQ", IR: "IR",
+  IS: "IL", IT: "IT", IV: "CI", IZ: "IQ", JA: "JP", JM: "JM", JO: "JO",
   KE: "KE", KG: "KG", KN: "KP", KO: "KR", KS: "XK", KU: "KW", KZ: "KZ",
-  LA: "LA", LE: "LB", LG: "LV", LH: "LT", LI: "LR", LO: "SK",
-  LS: "LI", LT: "LS", LU: "LU", LY: "LY",
-  MA: "MG", MC: "MO", MD: "MD", MG: "MN", MI: "MW", MK: "MK",
-  ML: "ML", MN: "MC", MO: "MA", MP: "MU", MR: "MR", MT: "MT",
-  MU: "OM", MV: "MV", MX: "MX", MY: "MY", MZ: "MZ",
-  NA: "AN",
-  NG: "NE", NH: "VU", NI: "NG", NL: "NL", NO: "NO", NP: "NP",
-  NS: "SR", NU: "NI", NZ: "NZ",
-  PA: "PY", PE: "PE", PK: "PK", PL: "PL", PM: "PA", PO: "PT",
-  PP: "PG", PS: "PW", PU: "GW",
-  QA: "QA",
-  RO: "RO", RP: "PH", RS: "RU", RW: "RW",
-  SA: "SA", SC: "KN", SE: "SC", SF: "ZA", SG: "SN", SI: "SI",
-  SL: "SL", SN: "SG", SO: "SO", SP: "ES", SR: "RS", SS: "SS",
-  SU: "SD", SW: "SE", SY: "SY", SZ: "CH",
-  TD: "TT", TH: "TH", TI: "TJ", TN: "TO", TO: "TG", TS: "TN",
-  TT: "TL", TU: "TR", TX: "TM", TZ: "TZ",
-  UG: "UG", UK: "GB", UP: "UA", US: "US", UY: "UY", UZ: "UZ",
-  VE: "VE", VM: "VN",
-  WA: "NA", WE: "PS", WS: "WS", WZ: "SZ",
-  YM: "YE",
-  ZA: "ZM", ZI: "ZW",
-  GL: "GL", MF: "YT", RE: "RE",
+  LA: "LA", LE: "LB", LG: "LV", LH: "LT", LI: "LR", LO: "SK", LS: "LI",
+  LT: "LS", LU: "LU", LY: "LY", MA: "MG", MC: "MO", MD: "MD", MG: "MN",
+  MI: "MW", MK: "MK", ML: "ML", MN: "MC", MO: "MA", MP: "MU", MR: "MR",
+  MT: "MT", MU: "OM", MV: "MV", MX: "MX", MY: "MY", MZ: "MZ", NA: "AN",
+  NG: "NE", NH: "VU", NI: "NG", NL: "NL", NO: "NO", NP: "NP", NS: "SR",
+  NU: "NI", NZ: "NZ", PA: "PY", PE: "PE", PK: "PK", PL: "PL", PM: "PA",
+  PO: "PT", PP: "PG", PS: "PW", PU: "GW", QA: "QA", RO: "RO", RP: "PH",
+  RS: "RU", RW: "RW", SA: "SA", SC: "KN", SE: "SC", SF: "ZA", SG: "SN",
+  SI: "SI", SL: "SL", SN: "SG", SO: "SO", SP: "ES", SR: "RS", SS: "SS",
+  SU: "SD", SW: "SE", SY: "SY", SZ: "CH", TD: "TT", TH: "TH", TI: "TJ",
+  TN: "TO", TO: "TG", TS: "TN", TT: "TL", TU: "TR", TX: "TM", TZ: "TZ",
+  UG: "UG", UK: "GB", UP: "UA", US: "US", UY: "UY", UZ: "UZ", VE: "VE",
+  VM: "VN", WA: "NA", WE: "PS", WS: "WS", WZ: "SZ", YM: "YE",
+  ZA: "ZM", ZI: "ZW", GL: "GL", MF: "YT", RE: "RE",
 };
 
 let cachedGeoJson: GeoJsonObject | null = null;
 async function getGeoJson(): Promise<GeoJsonObject> {
   if (cachedGeoJson) return cachedGeoJson;
-  const res = await fetch(
-    "https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson"
-  );
+  const res = await fetch("https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson");
   cachedGeoJson = (await res.json()) as GeoJsonObject;
   return cachedGeoJson;
 }
 
 function buildLookup(countries: Country[]): Record<string, Country> {
   const lookup: Record<string, Country> = {};
-  for (const c of countries) {
-    lookup[FIPS_TO_ISO2[c.country_code] ?? c.country_code] = c;
-  }
+  for (const c of countries) lookup[FIPS_TO_ISO2[c.country_code] ?? c.country_code] = c;
   return lookup;
 }
 
-const CLOSED_ISO2 = new Set(
-  AIRSPACE_CLOSURES.filter((c) => c.severity === "closed").map((c) => c.iso2)
-);
-const RESTRICTED_ISO2 = new Set(
-  AIRSPACE_CLOSURES.filter((c) => c.severity === "restricted").map((c) => c.iso2)
-);
+const CLOSED_ISO2 = new Set(AIRSPACE_CLOSURES.filter((c) => c.severity === "closed").map((c) => c.iso2));
+const RESTRICTED_ISO2 = new Set(AIRSPACE_CLOSURES.filter((c) => c.severity === "restricted").map((c) => c.iso2));
 
 function getStyle(
   iso2: string,
@@ -102,32 +79,36 @@ function getStyle(
   selectedCountry: Country | null
 ) {
   const country = lookup[iso2];
-  const isSelected =
-    selectedCountry != null &&
+  const isSelected = selectedCountry != null &&
     iso2 === (FIPS_TO_ISO2[selectedCountry.country_code] ?? selectedCountry.country_code);
   const base = { weight: isSelected ? 2 : 0.5, color: isSelected ? "#ffffff" : "#1e2533" };
 
   if (mode === "geopolitical") {
-    return country
-      ? { ...base, fillColor: getRiskColorHex(country.risk_score), fillOpacity: isSelected ? 0.9 : 0.65 }
-      : { ...base, fillColor: "#1e2533", fillOpacity: 0.4 };
+    // Color by conflict/political stress status
+    const status = COUNTRY_CONFLICT_STATUS[iso2] ?? "stable";
+    return {
+      ...base,
+      fillColor: STATUS_COLORS[status],
+      fillOpacity: isSelected ? 0.9 : STATUS_FILL_OPACITY[status],
+    };
   }
+
   if (mode === "safety") {
     const score = safetyScores[iso2];
     return score !== undefined
       ? { ...base, fillColor: getSafetyColor(score), fillOpacity: isSelected ? 0.9 : 0.65 }
       : { ...base, fillColor: "#334155", fillOpacity: 0.5 };
   }
+
   if (mode === "travel") {
     const level = TRAVEL_ADVISORIES[iso2]?.level ?? 1;
     const fillColor = ADVISORY_COLORS[level];
     const fillOpacity = level === 1 ? 0.35 : isSelected ? 0.9 : 0.65;
-    if (CLOSED_ISO2.has(iso2))
-      return { fillColor, fillOpacity, color: "#ef4444", weight: 2.5, dashArray: "6 3" };
-    if (RESTRICTED_ISO2.has(iso2))
-      return { fillColor, fillOpacity, color: "#f97316", weight: 2, dashArray: "5 4" };
+    if (CLOSED_ISO2.has(iso2)) return { fillColor, fillOpacity, color: "#ef4444", weight: 2.5, dashArray: "6 3" };
+    if (RESTRICTED_ISO2.has(iso2)) return { fillColor, fillOpacity, color: "#f97316", weight: 2, dashArray: "5 4" };
     return { ...base, fillColor, fillOpacity };
   }
+
   return { ...base, fillColor: "#1e2533", fillOpacity: 0.4 };
 }
 
@@ -139,47 +120,52 @@ function getTooltip(
   featureName: string
 ): string {
   const name = country?.country_name ?? featureName ?? iso2;
+
   if (mode === "geopolitical") {
-    return country
-      ? `<div class="font-medium">${name}</div><div class="text-xs">Risk: ${country.risk_score}/100</div>`
-      : `<div class="font-medium">${name}</div><div class="text-xs text-gray-500">No data</div>`;
+    const status = COUNTRY_CONFLICT_STATUS[iso2] ?? "stable";
+    const color = STATUS_COLORS[status];
+    const label = STATUS_LABELS[status];
+    // Find any conflict zones overlapping this country
+    const zone = CONFLICT_ZONES.find((z) => {
+      // Simple check — does this iso2 appear in a zone description or name
+      return z.id.startsWith(iso2.toLowerCase()) ||
+        z.name.toLowerCase().includes((country?.country_name ?? "").toLowerCase().split(" ")[0]);
+    });
+    return `<div class="font-medium">${name}</div>
+            <div class="text-xs" style="color:${color}">${label}</div>
+            ${zone ? `<div class="text-xs text-gray-400 mt-1">${zone.description}</div>` : ""}`;
   }
+
   if (mode === "safety") {
     const score = safetyScores[iso2];
     return score !== undefined
       ? `<div class="font-medium">${name}</div><div class="text-xs">Safety: ${score}/100 — ${getSafetyLabel(score)}</div>`
       : `<div class="font-medium">${name}</div><div class="text-xs text-gray-500">No data</div>`;
   }
+
   if (mode === "travel") {
     const advisory = TRAVEL_ADVISORIES[iso2];
     const level = advisory?.level ?? 1;
     const closure = AIRSPACE_CLOSURES.find((c) => c.iso2 === iso2);
     let html = `<div class="font-medium">${name}</div><div class="text-xs">Level ${level}: ${ADVISORY_LABELS[level]}</div>`;
     if (advisory?.reason) html += `<div class="text-xs text-gray-400">${advisory.reason}</div>`;
-    if (closure) {
-      const badge = closure.severity === "closed" ? "Airspace Closed" : "Airspace Restricted";
-      html += `<div class="text-xs mt-1">${badge}: ${closure.reason}</div>`;
-    }
+    if (closure) html += `<div class="text-xs mt-1">${closure.severity === "closed" ? "Airspace Closed" : "Airspace Restricted"}: ${closure.reason}</div>`;
     return html;
   }
+
   return `<div class="font-medium">${name}</div>`;
 }
 
-export default function LeafletMapComponent({
-  countries,
-  onCountryClick,
-  selectedCountry,
-  mode,
-  safetyScores,
-}: LeafletMapProps) {
+export default function LeafletMapComponent({ countries, onCountryClick, selectedCountry, mode, safetyScores }: LeafletMapProps) {
   const mapRef = useRef<LeafletMap | null>(null);
   const geoJsonLayerRef = useRef<LeafletGeoJSON | null>(null);
-  const militaryLayerRef = useRef<LayerGroup | null>(null);
+  const conflictLayerRef = useRef<LayerGroup | null>(null);
+  const basesLayerRef = useRef<LayerGroup | null>(null);
+  const aircraftLayerRef = useRef<LayerGroup | null>(null);
   const flightLayerRef = useRef<LayerGroup | null>(null);
-  const flightIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Refs — always current, safe to read inside async callbacks
   const modeRef = useRef(mode);
   const safetyRef = useRef(safetyScores);
   const countriesRef = useRef(countries);
@@ -189,51 +175,90 @@ export default function LeafletMapComponent({
   countriesRef.current = countries;
   selectedRef.current = selectedCountry;
 
-  // ── Military aircraft layer ────────────────────────────────────────────────
+  const clearOverlays = useCallback(() => {
+    conflictLayerRef.current?.remove(); conflictLayerRef.current = null;
+    basesLayerRef.current?.remove();    basesLayerRef.current = null;
+    aircraftLayerRef.current?.remove(); aircraftLayerRef.current = null;
+    flightLayerRef.current?.remove();   flightLayerRef.current = null;
+    if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+  }, []);
+
   const renderMilAircraft = useCallback(async () => {
     if (!mapRef.current) return;
     const L = await import("leaflet");
-    const map = mapRef.current;
-
-    // Remove old aircraft layer
-    if (militaryLayerRef.current) {
-      militaryLayerRef.current.remove();
-      militaryLayerRef.current = null;
-    }
+    aircraftLayerRef.current?.remove(); aircraftLayerRef.current = null;
 
     let aircraft: MilitaryAircraft[] = [];
     try { aircraft = await fetchMilitaryAircraft(); } catch { return; }
+    if (!mapRef.current) return;
 
     const canvas = L.canvas({ padding: 0.5 });
     const markers = aircraft.map((a) =>
       L.circleMarker([a.lat, a.lng], {
-        renderer: canvas,
-        radius: 3,
-        color: "#fbbf24",
-        fillColor: "#fde68a",
-        fillOpacity: 0.9,
-        weight: 1,
+        renderer: canvas, radius: 3,
+        color: "#fbbf24", fillColor: "#fde68a", fillOpacity: 0.9, weight: 1,
       }).bindTooltip(
         `<div class="font-medium">${a.callsign}</div>
-         <div class="text-xs text-yellow-400">Military Aircraft</div>
+         <div class="text-xs" style="color:#fbbf24">Military Aircraft</div>
          ${a.country ? `<div class="text-xs text-gray-400">${a.country}</div>` : ""}
          <div class="text-xs">Alt: ${Math.round(a.altitude)}ft &nbsp; ${Math.round(a.speed)}kts</div>`,
         { className: "geopulse-tooltip", sticky: true }
       )
     );
-
-    militaryLayerRef.current = L.layerGroup(markers).addTo(map);
+    aircraftLayerRef.current = L.layerGroup(markers).addTo(mapRef.current);
   }, []);
 
-  // ── Travel mode flights ────────────────────────────────────────────────────
-  const renderFlights = useCallback(async () => {
+  const renderStaticMilitary = useCallback(async () => {
     if (!mapRef.current) return;
     const L = await import("leaflet");
     const map = mapRef.current;
-    if (flightLayerRef.current) { flightLayerRef.current.remove(); flightLayerRef.current = null; }
+
+    // Conflict zone rectangles
+    conflictLayerRef.current?.remove();
+    const zoneMarkers = CONFLICT_ZONES.map((zone) => {
+      const [s, w, n, e] = zone.bounds;
+      return L.rectangle([[s, w], [n, e]], {
+        color: zone.color, weight: 1.5,
+        dashArray: zone.status === "active-war" ? "4 3" : "8 4",
+        fillColor: zone.color,
+        fillOpacity: zone.status === "active-war" ? 0.10 : 0.05,
+      }).bindTooltip(
+        `<div class="font-medium">${zone.name}</div>
+         <div class="text-xs" style="color:${zone.color}">${
+           zone.status === "active-war" ? "Active War" :
+           zone.status === "high-tension" ? "High Tension" : "Occupation"
+         }</div>
+         <div class="text-xs text-gray-400 mt-1">${zone.description}</div>`,
+        { className: "geopulse-tooltip", sticky: true }
+      );
+    });
+    conflictLayerRef.current = L.layerGroup(zoneMarkers).addTo(map);
+
+    // Military bases
+    basesLayerRef.current?.remove();
+    const baseMarkers = MILITARY_BASES.map((base) => {
+      const color = BASE_COLORS[base.operator];
+      return L.circleMarker([base.lat, base.lng], {
+        radius: 5, color, fillColor: color, fillOpacity: 0.85, weight: 1.5,
+      }).bindTooltip(
+        `<div class="font-medium">${base.name}</div>
+         <div class="text-xs" style="color:${color}">${base.operator} — ${base.type}</div>
+         <div class="text-xs text-gray-400">${base.country}</div>
+         ${base.personnel ? `<div class="text-xs">Personnel: ~${base.personnel}</div>` : ""}`,
+        { className: "geopulse-tooltip", sticky: true }
+      );
+    });
+    basesLayerRef.current = L.layerGroup(baseMarkers).addTo(map);
+  }, []);
+
+  const renderFlights = useCallback(async () => {
+    if (!mapRef.current) return;
+    const L = await import("leaflet");
+    flightLayerRef.current?.remove(); flightLayerRef.current = null;
 
     let flights: LiveFlight[] = [];
     try { flights = await fetchLiveFlights(); } catch { return; }
+    if (!mapRef.current) return;
 
     const canvas = L.canvas({ padding: 0.5 });
     const markers = flights.map((f) =>
@@ -247,81 +272,21 @@ export default function LeafletMapComponent({
         { className: "geopulse-tooltip", sticky: true }
       )
     );
-    flightLayerRef.current = L.layerGroup(markers).addTo(map);
+    flightLayerRef.current = L.layerGroup(markers).addTo(mapRef.current);
   }, []);
 
-  // ── Military overlay (conflict zones + bases + aircraft) ──────────────────
-  const buildMilitaryOverlay = useCallback(async () => {
-    if (!mapRef.current) return;
-    const L = await import("leaflet");
-    const map = mapRef.current;
-
-    if (militaryLayerRef.current) { militaryLayerRef.current.remove(); militaryLayerRef.current = null; }
-
-    const layers: ReturnType<typeof L.circleMarker | typeof L.rectangle>[] = [];
-
-    // 1. Conflict zone rectangles
-    for (const zone of CONFLICT_ZONES) {
-      const [s, w, n, e] = zone.bounds;
-      const rect = L.rectangle([[s, w], [n, e]], {
-        color: zone.color,
-        weight: 1.5,
-        dashArray: zone.status === "active-war" ? "4 3" : "8 4",
-        fillColor: zone.color,
-        fillOpacity: zone.status === "active-war" ? 0.12 : 0.07,
-      }).bindTooltip(
-        `<div class="font-medium">${zone.name}</div>
-         <div class="text-xs" style="color:${zone.color}">${
-           zone.status === "active-war" ? "Active War" :
-           zone.status === "high-tension" ? "High Tension" : "Occupation"
-         }</div>
-         <div class="text-xs text-gray-400 mt-1">${zone.description}</div>`,
-        { className: "geopulse-tooltip", sticky: true }
-      );
-      layers.push(rect);
-    }
-
-    // 2. Military base markers
-    for (const base of MILITARY_BASES) {
-      const color = BASE_COLORS[base.operator];
-      const marker = L.circleMarker([base.lat, base.lng], {
-        radius: 5,
-        color: color,
-        fillColor: color,
-        fillOpacity: 0.85,
-        weight: 1.5,
-      }).bindTooltip(
-        `<div class="font-medium">${base.name}</div>
-         <div class="text-xs" style="color:${color}">${base.operator} — ${base.type}</div>
-         <div class="text-xs text-gray-400">${base.country}</div>
-         ${base.personnel ? `<div class="text-xs">Personnel: ~${base.personnel}</div>` : ""}`,
-        { className: "geopulse-tooltip", sticky: true }
-      );
-      layers.push(marker);
-    }
-
-    militaryLayerRef.current = L.layerGroup(layers).addTo(map);
-
-    // 3. Military aircraft (refreshed every 30s)
-    renderMilAircraft();
-  }, [renderMilAircraft]);
-
-  // ── Core: build choropleth ─────────────────────────────────────────────────
   const buildLayer = useCallback(async () => {
     if (!mapRef.current) return;
     const L = await import("leaflet");
     const map = mapRef.current;
 
-    if (geoJsonLayerRef.current) { geoJsonLayerRef.current.remove(); geoJsonLayerRef.current = null; }
-    if (militaryLayerRef.current) { militaryLayerRef.current.remove(); militaryLayerRef.current = null; }
-    if (flightLayerRef.current) { flightLayerRef.current.remove(); flightLayerRef.current = null; }
-    if (flightIntervalRef.current) { clearInterval(flightIntervalRef.current); flightIntervalRef.current = null; }
+    geoJsonLayerRef.current?.remove(); geoJsonLayerRef.current = null;
+    clearOverlays();
 
     const geojson = await getGeoJson();
     const currentMode = modeRef.current;
     const currentSafety = safetyRef.current;
-    const currentCountries = countriesRef.current;
-    const lookup = buildLookup(currentCountries);
+    const lookup = buildLookup(countriesRef.current);
 
     const layer = L.geoJSON(geojson, {
       style: (feature) => {
@@ -340,17 +305,14 @@ export default function LeafletMapComponent({
             { className: "geopulse-tooltip", sticky: true }
           ).openTooltip();
         });
-
         fl.on("mouseout", () => {
           const lkp = buildLookup(countriesRef.current);
           const s = getStyle(iso2, lkp, modeRef.current, safetyRef.current, selectedRef.current);
           (fl as unknown as { setStyle: (s: object) => void }).setStyle({ fillOpacity: s.fillOpacity });
           fl.closeTooltip();
         });
-
         fl.on("click", () => {
-          const lkp = buildLookup(countriesRef.current);
-          const c = lkp[iso2];
+          const c = buildLookup(countriesRef.current)[iso2];
           if (c) onCountryClick(c);
         });
       },
@@ -359,18 +321,16 @@ export default function LeafletMapComponent({
     layer.addTo(map);
     geoJsonLayerRef.current = layer;
 
-    // Add mode-specific overlays on top
     if (currentMode === "geopolitical") {
-      buildMilitaryOverlay();
-      // Refresh aircraft every 30s
-      flightIntervalRef.current = setInterval(renderMilAircraft, 30_000);
+      await renderStaticMilitary();
+      await renderMilAircraft();
+      intervalRef.current = setInterval(renderMilAircraft, 30_000);
     } else if (currentMode === "travel") {
-      renderFlights();
-      flightIntervalRef.current = setInterval(renderFlights, 60_000);
+      await renderFlights();
+      intervalRef.current = setInterval(renderFlights, 60_000);
     }
-  }, [onCountryClick, buildMilitaryOverlay, renderMilAircraft, renderFlights]);
+  }, [onCountryClick, clearOverlays, renderStaticMilitary, renderMilAircraft, renderFlights]);
 
-  // ── Init map once ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
     import("leaflet").then((L) => {
@@ -388,20 +348,18 @@ export default function LeafletMapComponent({
       buildLayer();
     });
     return () => {
-      if (flightIntervalRef.current) clearInterval(flightIntervalRef.current);
-      if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; }
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      mapRef.current?.remove(); mapRef.current = null;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Rebuild when data/mode changes
   useEffect(() => {
     if (mode === "safety" && Object.keys(safetyScores).length === 0) return;
     buildLayer();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [countries, mode, safetyScores]);
 
-  // Re-style on selection change
   useEffect(() => {
     if (!geoJsonLayerRef.current) return;
     const lookup = buildLookup(countries);
@@ -419,11 +377,7 @@ export default function LeafletMapComponent({
     <>
       <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
       <style>{`
-        .geopulse-tooltip {
-          background: #161b27; border: 1px solid #1e2533; border-radius: 6px;
-          color: #f3f4f6; font-size: 12px; padding: 6px 10px;
-          box-shadow: 0 4px 12px rgba(0,0,0,0.5);
-        }
+        .geopulse-tooltip { background: #161b27; border: 1px solid #1e2533; border-radius: 6px; color: #f3f4f6; font-size: 12px; padding: 6px 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); }
         .geopulse-tooltip::before { display: none; }
         .leaflet-container { background: #0a0d14; }
         .leaflet-control-zoom a { background: #161b27 !important; color: #9ca3af !important; border-color: #1e2533 !important; }
