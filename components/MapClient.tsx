@@ -106,7 +106,7 @@ function ModeLegend({ mode }: { mode: MapMode }) {
           { color: "#f97316", label: "High Tension" },
           { color: "#eab308", label: "Occupation / Disputed" },
           { color: "#a855f7", label: "Heavily Sanctioned" },
-          { color: "#1e2533", label: "Stable", border: "#4b5563" },
+          { color: "#22c55e", label: "Stable" },
         ].map(({ color, label, border }) => (
           <div key={label} className="flex items-center gap-2 py-0.5">
             <span className="w-2.5 h-2.5 rounded-sm inline-block flex-shrink-0"
