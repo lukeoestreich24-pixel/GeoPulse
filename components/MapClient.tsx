@@ -33,24 +33,18 @@ export default function MapClient({ initialCountries, mode }: MapClientProps) {
   const [safetyScores, setSafetyScores] = useState<Record<string, number>>({});
   const [loadingSafety, setLoadingSafety] = useState(false);
 
-  // Always fetch fresh country data client-side
   useEffect(() => {
     fetch("/api/countries")
       .then((r) => r.json())
-      .then((data) => {
-        if (Array.isArray(data) && data.length > 0) setCountries(data);
-      })
+      .then((data) => { if (Array.isArray(data) && data.length > 0) setCountries(data); })
       .catch(console.error);
   }, []);
 
-  // Fetch World Bank safety scores when switching to safety mode
   useEffect(() => {
     if (mode !== "safety") return;
     if (Object.keys(safetyScores).length > 0) return;
     setLoadingSafety(true);
-    getSafetyScores()
-      .then(setSafetyScores)
-      .finally(() => setLoadingSafety(false));
+    getSafetyScores().then(setSafetyScores).finally(() => setLoadingSafety(false));
   }, [mode, safetyScores]);
 
   const handleCountryClick = useCallback(async (country: Country) => {
@@ -61,22 +55,14 @@ export default function MapClient({ initialCountries, mode }: MapClientProps) {
     try {
       const res = await fetch(`/api/events?country_code=${country.country_code}`);
       if (!res.ok) throw new Error("Failed to fetch events");
-      const data: GdeltEvent[] = await res.json();
-      setEvents(data);
-    } catch (err) {
-      console.error(err);
-      setEvents([]);
-    } finally {
-      setLoadingEvents(false);
-    }
+      setEvents(await res.json());
+    } catch { setEvents([]); }
+    finally { setLoadingEvents(false); }
   }, []);
 
   const handleClose = useCallback(() => {
     setSidebarOpen(false);
-    setTimeout(() => {
-      setSelectedCountry(null);
-      setEvents([]);
-    }, 300);
+    setTimeout(() => { setSelectedCountry(null); setEvents([]); }, 300);
   }, []);
 
   return (
@@ -84,15 +70,10 @@ export default function MapClient({ initialCountries, mode }: MapClientProps) {
       {loadingSafety && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1001] bg-[#161b27] border border-[#1e2533] rounded-lg px-4 py-2 text-xs text-gray-400 flex items-center gap-2">
           <div className="animate-spin h-3 w-3 border border-blue-500 border-t-transparent rounded-full" />
-          Loading safety data…
+          Loading safety data...
         </div>
       )}
 
-      {/*
-        key={mode} forces LeafletMap to fully unmount and remount on every tab
-        switch. This guarantees the map re-initialises with the correct mode
-        rather than trying to patch an existing Leaflet instance in place.
-      */}
       <LeafletMap
         key={mode}
         countries={countries}
@@ -111,13 +92,6 @@ export default function MapClient({ initialCountries, mode }: MapClientProps) {
         isOpen={sidebarOpen}
         onClose={handleClose}
       />
-
-      {countries.length === 0 && (
-        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-[#161b27] border border-[#1e2533] rounded-lg px-4 py-3 text-sm text-gray-400 max-w-sm text-center z-[1000]">
-          No data yet. Trigger{" "}
-          <code className="text-blue-400">/api/update-events</code> to fetch GDELT data.
-        </div>
-      )}
     </div>
   );
 }
@@ -126,20 +100,46 @@ function ModeLegend({ mode }: { mode: MapMode }) {
   if (mode === "geopolitical") {
     return (
       <div className="absolute bottom-8 left-4 z-[1000] bg-[#161b27]/90 border border-[#1e2533] rounded-lg px-3 py-2.5 text-xs backdrop-blur-sm">
-        <div className="text-gray-500 font-medium mb-1.5 uppercase tracking-wider text-[10px]">Risk Level</div>
+        <div className="text-gray-500 font-medium mb-1.5 uppercase tracking-wider text-[10px]">Conflict Status</div>
         {[
-          { color: "#6b7280", label: "Minimal",  range: "0–19" },
-          { color: "#22c55e", label: "Low",       range: "20–39" },
-          { color: "#eab308", label: "Medium",    range: "40–59" },
-          { color: "#f97316", label: "High",      range: "60–79" },
-          { color: "#ef4444", label: "Critical",  range: "80–100" },
-        ].map(({ color, label, range }) => (
+          { color: "#ef4444", label: "Active War" },
+          { color: "#f97316", label: "High Tension" },
+          { color: "#eab308", label: "Occupation / Disputed" },
+          { color: "#a855f7", label: "Heavily Sanctioned" },
+          { color: "#1e2533", label: "Stable", border: "#4b5563" },
+        ].map(({ color, label, border }) => (
           <div key={label} className="flex items-center gap-2 py-0.5">
-            <span className="w-2.5 h-2.5 rounded-full inline-block flex-shrink-0" style={{ backgroundColor: color }} />
+            <span className="w-2.5 h-2.5 rounded-sm inline-block flex-shrink-0" style={{ backgroundColor: color, border: border ? `1px solid ${border}` : undefined }} />
             <span className="text-gray-300">{label}</span>
-            <span className="text-gray-600 ml-auto pl-3">{range}</span>
           </div>
         ))}
+        <div className="border-t border-[#1e2533] mt-2 pt-1.5 space-y-0.5">
+          <div className="text-gray-500 font-medium uppercase tracking-wider text-[10px] mb-1">Overlays</div>
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2 inline-block flex-shrink-0 border border-red-400 border-dashed rounded-sm" />
+            <span className="text-gray-400">Active conflict zone</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full inline-block flex-shrink-0 bg-blue-500" />
+            <span className="text-gray-400">US base</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full inline-block flex-shrink-0 bg-purple-500" />
+            <span className="text-gray-400">NATO base</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full inline-block flex-shrink-0 bg-red-500" />
+            <span className="text-gray-400">Russian base</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full inline-block flex-shrink-0 bg-orange-500" />
+            <span className="text-gray-400">Chinese base</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full inline-block flex-shrink-0 bg-yellow-300" />
+            <span className="text-gray-400">Military aircraft (live)</span>
+          </div>
+        </div>
       </div>
     );
   }
@@ -153,7 +153,7 @@ function ModeLegend({ mode }: { mode: MapMode }) {
           { color: "#84cc16", label: "Relatively Safe",      range: "60–79" },
           { color: "#eab308", label: "Moderate Concerns",    range: "40–59" },
           { color: "#f97316", label: "Significant Concerns", range: "20–39" },
-          { color: "#ef4444", label: "High Risk",            range: "0–19" },
+          { color: "#ef4444", label: "High Risk",            range: "0–19"  },
         ].map(({ color, label, range }) => (
           <div key={label} className="flex items-center gap-2 py-0.5">
             <span className="w-2.5 h-2.5 rounded-full inline-block flex-shrink-0" style={{ backgroundColor: color }} />
