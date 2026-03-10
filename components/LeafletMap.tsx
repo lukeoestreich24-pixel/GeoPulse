@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useCallback } from "react";
 import { Country, getRiskColorHex } from "@/types";
-import type { Map as LeafletMap, GeoJSON as LeafletGeoJSON, LayerGroup } from "leaflet";
+import type { Map as LeafletMap, GeoJSON as LeafletGeoJSON, LayerGroup, CircleMarker } from "leaflet";
 import type { GeoJsonObject } from "geojson";
 import { MapMode } from "./AppShell";
 import {
@@ -22,6 +22,8 @@ interface LeafletMapProps {
   selectedCountry: Country | null;
   mode: MapMode;
   safetyScores: Record<string, number>;
+  searchCallsign?: string;
+  onSearchResult?: (found: boolean) => void;
 }
 
 const FIPS_TO_ISO2: Record<string, string> = {
@@ -85,20 +87,14 @@ function getStyle(
 
   if (mode === "geopolitical") {
     const status = COUNTRY_CONFLICT_STATUS[iso2] ?? "stable";
-    return {
-      ...base,
-      fillColor: STATUS_COLORS[status],
-      fillOpacity: isSelected ? 0.9 : STATUS_FILL_OPACITY[status],
-    };
+    return { ...base, fillColor: STATUS_COLORS[status], fillOpacity: isSelected ? 0.9 : STATUS_FILL_OPACITY[status] };
   }
-
   if (mode === "safety") {
     const score = safetyScores[iso2];
     return score !== undefined
       ? { ...base, fillColor: getSafetyColor(score), fillOpacity: isSelected ? 0.9 : 0.65 }
       : { ...base, fillColor: "#334155", fillOpacity: 0.5 };
   }
-
   if (mode === "travel") {
     const level = TRAVEL_ADVISORIES[iso2]?.level ?? 1;
     const fillColor = ADVISORY_COLORS[level];
@@ -107,39 +103,27 @@ function getStyle(
     if (RESTRICTED_ISO2.has(iso2)) return { fillColor, fillOpacity, color: "#f97316", weight: 2, dashArray: "5 4" };
     return { ...base, fillColor, fillOpacity };
   }
-
   return { ...base, fillColor: "#1e2533", fillOpacity: 0.4 };
 }
 
-function getTooltip(
-  iso2: string,
-  country: Country | undefined,
-  mode: MapMode,
-  safetyScores: Record<string, number>,
-  featureName: string
-): string {
+function getTooltip(iso2: string, country: Country | undefined, mode: MapMode, safetyScores: Record<string, number>, featureName: string): string {
   const name = country?.country_name ?? featureName ?? iso2;
-
   if (mode === "geopolitical") {
     const status = COUNTRY_CONFLICT_STATUS[iso2] ?? "stable";
-    const color = STATUS_COLORS[status];
-    const label = STATUS_LABELS[status];
     const zone = CONFLICT_ZONES.find((z) =>
       z.id.startsWith(iso2.toLowerCase()) ||
       z.name.toLowerCase().includes((country?.country_name ?? "").toLowerCase().split(" ")[0])
     );
     return `<div class="font-medium">${name}</div>
-            <div class="text-xs" style="color:${color}">${label}</div>
+            <div class="text-xs" style="color:${STATUS_COLORS[status]}">${STATUS_LABELS[status]}</div>
             ${zone ? `<div class="text-xs text-gray-400 mt-1">${zone.description}</div>` : ""}`;
   }
-
   if (mode === "safety") {
     const score = safetyScores[iso2];
     return score !== undefined
       ? `<div class="font-medium">${name}</div><div class="text-xs">Safety: ${score}/100 — ${getSafetyLabel(score)}</div>`
       : `<div class="font-medium">${name}</div><div class="text-xs text-gray-500">No data</div>`;
   }
-
   if (mode === "travel") {
     const advisory = TRAVEL_ADVISORIES[iso2];
     const level = advisory?.level ?? 1;
@@ -149,19 +133,25 @@ function getTooltip(
     if (closure) html += `<div class="text-xs mt-1">${closure.severity === "closed" ? "Airspace Closed" : "Airspace Restricted"}: ${closure.reason}</div>`;
     return html;
   }
-
   return `<div class="font-medium">${name}</div>`;
 }
 
-export default function LeafletMapComponent({ countries, onCountryClick, selectedCountry, mode, safetyScores }: LeafletMapProps) {
+export default function LeafletMapComponent({
+  countries, onCountryClick, selectedCountry, mode, safetyScores,
+  searchCallsign = "", onSearchResult,
+}: LeafletMapProps) {
   const mapRef = useRef<LeafletMap | null>(null);
   const geoJsonLayerRef = useRef<LeafletGeoJSON | null>(null);
   const conflictLayerRef = useRef<LayerGroup | null>(null);
   const basesLayerRef = useRef<LayerGroup | null>(null);
   const aircraftLayerRef = useRef<LayerGroup | null>(null);
   const flightLayerRef = useRef<LayerGroup | null>(null);
+  const highlightLayerRef = useRef<LayerGroup | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Store live flight data so search can access it without re-fetching
+  const flightDataRef = useRef<LiveFlight[]>([]);
 
   const modeRef = useRef(mode);
   const safetyRef = useRef(safetyScores);
@@ -177,6 +167,7 @@ export default function LeafletMapComponent({ countries, onCountryClick, selecte
     basesLayerRef.current?.remove();    basesLayerRef.current = null;
     aircraftLayerRef.current?.remove(); aircraftLayerRef.current = null;
     flightLayerRef.current?.remove();   flightLayerRef.current = null;
+    highlightLayerRef.current?.remove(); highlightLayerRef.current = null;
     if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
   }, []);
 
@@ -184,16 +175,13 @@ export default function LeafletMapComponent({ countries, onCountryClick, selecte
     if (!mapRef.current) return;
     const L = await import("leaflet");
     aircraftLayerRef.current?.remove(); aircraftLayerRef.current = null;
-
     let aircraft: MilitaryAircraft[] = [];
     try { aircraft = await fetchMilitaryAircraft(); } catch { return; }
     if (!mapRef.current) return;
-
     const canvas = L.canvas({ padding: 0.5, pane: "aircraftPane" });
     const markers = aircraft.map((a) =>
       L.circleMarker([a.lat, a.lng], {
-        pane: "aircraftPane",
-        renderer: canvas, radius: 3,
+        pane: "aircraftPane", renderer: canvas, radius: 3,
         color: "#fbbf24", fillColor: "#fde68a", fillOpacity: 0.9, weight: 1,
       }).bindTooltip(
         `<div class="font-medium">${a.callsign}</div>
@@ -210,34 +198,26 @@ export default function LeafletMapComponent({ countries, onCountryClick, selecte
     if (!mapRef.current) return;
     const L = await import("leaflet");
     const map = mapRef.current;
-
     conflictLayerRef.current?.remove();
     const zoneMarkers = CONFLICT_ZONES.map((zone) => {
       const [s, w, n, e] = zone.bounds;
       return L.rectangle([[s, w], [n, e]], {
-        pane: "militaryPane",
-        color: zone.color, weight: 1.5,
+        pane: "militaryPane", color: zone.color, weight: 1.5,
         dashArray: zone.status === "active-war" ? "4 3" : "8 4",
-        fillColor: zone.color,
-        fillOpacity: zone.status === "active-war" ? 0.10 : 0.05,
+        fillColor: zone.color, fillOpacity: zone.status === "active-war" ? 0.10 : 0.05,
       }).bindTooltip(
         `<div class="font-medium">${zone.name}</div>
-         <div class="text-xs" style="color:${zone.color}">${
-           zone.status === "active-war" ? "Active War" :
-           zone.status === "high-tension" ? "High Tension" : "Occupation"
-         }</div>
+         <div class="text-xs" style="color:${zone.color}">${zone.status === "active-war" ? "Active War" : zone.status === "high-tension" ? "High Tension" : "Occupation"}</div>
          <div class="text-xs text-gray-400 mt-1">${zone.description}</div>`,
         { className: "geopulse-tooltip", sticky: true }
       );
     });
     conflictLayerRef.current = L.layerGroup(zoneMarkers).addTo(map);
-
     basesLayerRef.current?.remove();
     const baseMarkers = MILITARY_BASES.map((base) => {
       const color = BASE_COLORS[base.operator];
       return L.circleMarker([base.lat, base.lng], {
-        pane: "militaryPane",
-        radius: 5, color, fillColor: color, fillOpacity: 0.85, weight: 1.5,
+        pane: "militaryPane", radius: 5, color, fillColor: color, fillOpacity: 0.85, weight: 1.5,
       }).bindTooltip(
         `<div class="font-medium">${base.name}</div>
          <div class="text-xs" style="color:${color}">${base.operator} — ${base.type}</div>
@@ -253,16 +233,14 @@ export default function LeafletMapComponent({ countries, onCountryClick, selecte
     if (!mapRef.current) return;
     const L = await import("leaflet");
     flightLayerRef.current?.remove(); flightLayerRef.current = null;
-
     let flights: LiveFlight[] = [];
     try { flights = await fetchLiveFlights(); } catch { return; }
     if (!mapRef.current) return;
-
+    flightDataRef.current = flights; // store for search
     const canvas = L.canvas({ padding: 0.5, pane: "flightPane" });
     const markers = flights.map((f) =>
       L.circleMarker([f.latitude, f.longitude], {
-        pane: "flightPane",
-        renderer: canvas, radius: 1.5,
+        pane: "flightPane", renderer: canvas, radius: 1.5,
         color: "#60a5fa", fillColor: "#93c5fd", fillOpacity: 0.85, weight: 0,
       }).bindTooltip(
         `<div class="font-medium">${f.callsign || f.icao24}</div>
@@ -278,15 +256,12 @@ export default function LeafletMapComponent({ countries, onCountryClick, selecte
     if (!mapRef.current) return;
     const L = await import("leaflet");
     const map = mapRef.current;
-
     geoJsonLayerRef.current?.remove(); geoJsonLayerRef.current = null;
     clearOverlays();
-
     const geojson = await getGeoJson();
     const currentMode = modeRef.current;
     const currentSafety = safetyRef.current;
     const lookup = buildLookup(countriesRef.current);
-
     const layer = L.geoJSON(geojson, {
       style: (feature) => {
         const iso2: string = feature?.properties?.["ISO3166-1-Alpha-2"] ?? "";
@@ -295,14 +270,10 @@ export default function LeafletMapComponent({ countries, onCountryClick, selecte
       onEachFeature: (feature, fl) => {
         const iso2: string = feature?.properties?.["ISO3166-1-Alpha-2"] ?? "";
         const featureName: string = feature?.properties?.name ?? iso2;
-
         fl.on("mouseover", () => {
           const lkp = buildLookup(countriesRef.current);
           (fl as unknown as { setStyle: (s: object) => void }).setStyle({ fillOpacity: 0.9 });
-          fl.bindTooltip(
-            getTooltip(iso2, lkp[iso2], modeRef.current, safetyRef.current, featureName),
-            { className: "geopulse-tooltip", sticky: true }
-          ).openTooltip();
+          fl.bindTooltip(getTooltip(iso2, lkp[iso2], modeRef.current, safetyRef.current, featureName), { className: "geopulse-tooltip", sticky: true }).openTooltip();
         });
         fl.on("mouseout", () => {
           const lkp = buildLookup(countriesRef.current);
@@ -316,10 +287,8 @@ export default function LeafletMapComponent({ countries, onCountryClick, selecte
         });
       },
     });
-
     layer.addTo(map);
     geoJsonLayerRef.current = layer;
-
     if (currentMode === "geopolitical") {
       await renderStaticMilitary();
       await renderMilAircraft();
@@ -330,6 +299,60 @@ export default function LeafletMapComponent({ countries, onCountryClick, selecte
     }
   }, [onCountryClick, clearOverlays, renderStaticMilitary, renderMilAircraft, renderFlights]);
 
+  // ── Tail number search ────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!searchCallsign || !mapRef.current) return;
+
+    import("leaflet").then((L) => {
+      if (!mapRef.current) return;
+      const map = mapRef.current;
+
+      // Remove old highlight
+      highlightLayerRef.current?.remove(); highlightLayerRef.current = null;
+
+      const q = searchCallsign.toUpperCase();
+      const flights = flightDataRef.current;
+
+      // Match on callsign or icao24 (tail number)
+      const match = flights.find(
+        (f) =>
+          (f.callsign || "").toUpperCase().includes(q) ||
+          (f.icao24 || "").toUpperCase().includes(q)
+      );
+
+      if (!match) {
+        onSearchResult?.(false);
+        return;
+      }
+
+      // Pan and zoom to the aircraft
+      map.flyTo([match.latitude, match.longitude], 6, { duration: 1.5 });
+
+      // Add a bright highlight ring around the found aircraft
+      const highlight = L.circleMarker([match.latitude, match.longitude], {
+        pane: "flightPane",
+        radius: 12,
+        color: "#ffffff",
+        fillColor: "#facc15",
+        fillOpacity: 0.9,
+        weight: 2,
+      }).bindTooltip(
+        `<div class="font-medium" style="color:#facc15">${match.callsign || match.icao24}</div>
+         <div class="text-xs text-white">Search result</div>
+         <div class="text-xs text-gray-400">${match.origin_country}</div>
+         <div class="text-xs">Alt: ${Math.round(match.altitude)}m</div>`,
+        { className: "geopulse-tooltip", sticky: true, permanent: false }
+      ).addTo(map);
+
+      // Also open the tooltip immediately
+      highlight.openTooltip();
+
+      highlightLayerRef.current = L.layerGroup([highlight as unknown as CircleMarker]).addTo(map);
+      onSearchResult?.(true);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchCallsign]);
+
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
     import("leaflet").then((L) => {
@@ -339,27 +362,21 @@ export default function LeafletMapComponent({ countries, onCountryClick, selecte
         center: [20, 10], zoom: 2.5, minZoom: 2, maxZoom: 8,
         zoomControl: true, attributionControl: true,
       });
-
-      // Dark base tiles — no labels
       L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png", {
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
         subdomains: "abcd", maxZoom: 19,
       }).addTo(map);
 
-      // Create elevated panes so markers always render above the choropleth
       map.createPane("militaryPane").style.zIndex = "450";
       map.createPane("aircraftPane").style.zIndex = "460";
       map.createPane("flightPane").style.zIndex   = "460";
 
-      // Labels-only overlay: city names, state/province lines, roads — sits above choropleth
       const labelPane = map.createPane("labelPane");
-      labelPane.style.zIndex = "650"; // above everything including markers
+      labelPane.style.zIndex = "650";
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (labelPane.style as any).pointerEvents = "none"; // don't block mouse on markers below
+      (labelPane.style as any).pointerEvents = "none";
       L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png", {
-        subdomains: "abcd",
-        maxZoom: 19,
-        pane: "labelPane",
+        subdomains: "abcd", maxZoom: 19, pane: "labelPane",
       }).addTo(map);
 
       mapRef.current = map;
