@@ -339,6 +339,8 @@ export default function LeafletMapComponent({ countries, onCountryClick, selecte
         center: [20, 10], zoom: 2.5, minZoom: 2, maxZoom: 8,
         zoomControl: true, attributionControl: true,
       });
+
+      // Dark base tiles — no labels
       L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png", {
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
         subdomains: "abcd", maxZoom: 19,
@@ -348,6 +350,17 @@ export default function LeafletMapComponent({ countries, onCountryClick, selecte
       map.createPane("militaryPane").style.zIndex = "450";
       map.createPane("aircraftPane").style.zIndex = "460";
       map.createPane("flightPane").style.zIndex   = "460";
+
+      // Labels-only overlay: city names, state/province lines, roads — sits above choropleth
+      const labelPane = map.createPane("labelPane");
+      labelPane.style.zIndex = "650"; // above everything including markers
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (labelPane.style as any).pointerEvents = "none"; // don't block mouse on markers below
+      L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png", {
+        subdomains: "abcd",
+        maxZoom: 19,
+        pane: "labelPane",
+      }).addTo(map);
 
       mapRef.current = map;
       buildLayer();
