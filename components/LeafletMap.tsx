@@ -1,384 +1,205 @@
 "use client";
 
-import { useEffect, useRef, useCallback } from "react";
-import { Country, getRiskColorHex } from "@/types";
-import type { Map as LeafletMap, GeoJSON as LeafletGeoJSON, LayerGroup } from "leaflet";
-import type { GeoJsonObject } from "geojson";
+import dynamic from "next/dynamic";
+import { useState, useCallback, useEffect } from "react";
+import { Country, GdeltEvent } from "@/types";
 import { MapMode } from "./AppShell";
-import {
-  TRAVEL_ADVISORIES, AIRSPACE_CLOSURES, ADVISORY_COLORS, ADVISORY_LABELS,
-  fetchLiveFlights, type LiveFlight,
-} from "@/lib/travel";
-import { getSafetyColor, getSafetyLabel } from "@/lib/safety-client";
-import {
-  CONFLICT_ZONES, MILITARY_BASES, BASE_COLORS,
-  COUNTRY_CONFLICT_STATUS, STATUS_COLORS, STATUS_FILL_OPACITY, STATUS_LABELS,
-  fetchMilitaryAircraft, type MilitaryAircraft,
-} from "@/lib/military";
+import CountrySidebar from "./CountrySidebar";
+import { getSafetyScores } from "@/lib/safety-client";
 
-interface LeafletMapProps {
-  countries: Country[];
-  onCountryClick: (country: Country) => void;
-  selectedCountry: Country | null;
+const LeafletMap = dynamic(() => import("./LeafletMap"), {
+  ssr: false,
+  loading: () => (
+    <div className="w-full h-full flex items-center justify-center bg-[#0f1117]">
+      <div className="text-center space-y-3">
+        <div className="animate-spin h-8 w-8 border-2 border-blue-500 border-t-transparent rounded-full mx-auto" />
+        <p className="text-gray-500 text-sm">Loading map...</p>
+      </div>
+    </div>
+  ),
+});
+
+interface MapClientProps {
+  initialCountries: Country[];
   mode: MapMode;
-  safetyScores: Record<string, number>;
 }
 
-const FIPS_TO_ISO2: Record<string, string> = {
-  AF: "AF", AG: "DZ", AJ: "AZ", AL: "AL", AM: "AM", AO: "AO", AR: "AR",
-  AS: "AU", AU: "AT", BA: "BH", BB: "BB", BC: "BW", BD: "BM",
-  BE: "BE", BF: "BS", BG: "BD", BH: "BZ", BK: "BA", BL: "BO", BM: "MM",
-  BN: "BJ", BO: "BY", BR: "BR", BT: "BT", BU: "BG", BX: "BN", BY: "BI",
-  CA: "CA", CB: "KH", CD: "TD", CF: "CG", CG: "CD", CH: "CN", CI: "CL",
-  CM: "CM", CN: "KM", CO: "CO", CS: "CR", CT: "CF", CU: "CU", CV: "CV",
-  CY: "CY", DA: "DK", DJ: "DJ", DO: "DM", DR: "DO", EC: "EC", EG: "EG",
-  EI: "IE", EK: "GQ", EN: "EE", ER: "ER", ES: "SV", ET: "ET", EZ: "CZ",
-  FI: "FI", FJ: "FJ", FR: "FR", GA: "GM", GB: "GA", GG: "GE", GH: "GH",
-  GJ: "GD", GM: "DE", GR: "GR", GT: "GT", GV: "GN", GY: "GY", HA: "HT",
-  HN: "HN", HU: "HU", IC: "IS", ID: "ID", IN: "IN", IQ: "IQ", IR: "IR",
-  IS: "IL", IT: "IT", IV: "CI", IZ: "IQ", JA: "JP", JM: "JM", JO: "JO",
-  KE: "KE", KG: "KG", KN: "KP", KO: "KR", KS: "XK", KU: "KW", KZ: "KZ",
-  LA: "LA", LE: "LB", LG: "LV", LH: "LT", LI: "LR", LO: "SK", LS: "LI",
-  LT: "LS", LU: "LU", LY: "LY", MA: "MG", MC: "MO", MD: "MD", MG: "MN",
-  MI: "MW", MK: "MK", ML: "ML", MN: "MC", MO: "MA", MP: "MU", MR: "MR",
-  MT: "MT", MU: "OM", MV: "MV", MX: "MX", MY: "MY", MZ: "MZ", NA: "AN",
-  NG: "NE", NH: "VU", NI: "NG", NL: "NL", NO: "NO", NP: "NP", NS: "SR",
-  NU: "NI", NZ: "NZ", PA: "PY", PE: "PE", PK: "PK", PL: "PL", PM: "PA",
-  PO: "PT", PP: "PG", PS: "PW", PU: "GW", QA: "QA", RO: "RO", RP: "PH",
-  RS: "RU", RW: "RW", SA: "SA", SC: "KN", SE: "SC", SF: "ZA", SG: "SN",
-  SI: "SI", SL: "SL", SN: "SG", SO: "SO", SP: "ES", SR: "RS", SS: "SS",
-  SU: "SD", SW: "SE", SY: "SY", SZ: "CH", TD: "TT", TH: "TH", TI: "TJ",
-  TN: "TO", TO: "TG", TS: "TN", TT: "TL", TU: "TR", TX: "TM", TZ: "TZ",
-  UG: "UG", UK: "GB", UP: "UA", US: "US", UY: "UY", UZ: "UZ", VE: "VE",
-  VM: "VN", WA: "NA", WE: "PS", WS: "WS", WZ: "SZ", YM: "YE",
-  ZA: "ZM", ZI: "ZW", GL: "GL", MF: "YT", RE: "RE",
-};
-
-let cachedGeoJson: GeoJsonObject | null = null;
-async function getGeoJson(): Promise<GeoJsonObject> {
-  if (cachedGeoJson) return cachedGeoJson;
-  const res = await fetch("https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson");
-  cachedGeoJson = (await res.json()) as GeoJsonObject;
-  return cachedGeoJson;
-}
-
-function buildLookup(countries: Country[]): Record<string, Country> {
-  const lookup: Record<string, Country> = {};
-  for (const c of countries) lookup[FIPS_TO_ISO2[c.country_code] ?? c.country_code] = c;
-  return lookup;
-}
-
-const CLOSED_ISO2 = new Set(AIRSPACE_CLOSURES.filter((c) => c.severity === "closed").map((c) => c.iso2));
-const RESTRICTED_ISO2 = new Set(AIRSPACE_CLOSURES.filter((c) => c.severity === "restricted").map((c) => c.iso2));
-
-function getStyle(
-  iso2: string,
-  lookup: Record<string, Country>,
-  mode: MapMode,
-  safetyScores: Record<string, number>,
-  selectedCountry: Country | null
-) {
-  const country = lookup[iso2];
-  const isSelected = selectedCountry != null &&
-    iso2 === (FIPS_TO_ISO2[selectedCountry.country_code] ?? selectedCountry.country_code);
-  const base = { weight: isSelected ? 2 : 0.5, color: isSelected ? "#ffffff" : "#1e2533" };
-
-  if (mode === "geopolitical") {
-    const status = COUNTRY_CONFLICT_STATUS[iso2] ?? "stable";
-    return {
-      ...base,
-      fillColor: STATUS_COLORS[status],
-      fillOpacity: isSelected ? 0.9 : STATUS_FILL_OPACITY[status],
-    };
-  }
-
-  if (mode === "safety") {
-    const score = safetyScores[iso2];
-    return score !== undefined
-      ? { ...base, fillColor: getSafetyColor(score), fillOpacity: isSelected ? 0.9 : 0.65 }
-      : { ...base, fillColor: "#334155", fillOpacity: 0.5 };
-  }
-
-  if (mode === "travel") {
-    const level = TRAVEL_ADVISORIES[iso2]?.level ?? 1;
-    const fillColor = ADVISORY_COLORS[level];
-    const fillOpacity = level === 1 ? 0.35 : isSelected ? 0.9 : 0.65;
-    if (CLOSED_ISO2.has(iso2)) return { fillColor, fillOpacity, color: "#ef4444", weight: 2.5, dashArray: "6 3" };
-    if (RESTRICTED_ISO2.has(iso2)) return { fillColor, fillOpacity, color: "#f97316", weight: 2, dashArray: "5 4" };
-    return { ...base, fillColor, fillOpacity };
-  }
-
-  return { ...base, fillColor: "#1e2533", fillOpacity: 0.4 };
-}
-
-function getTooltip(
-  iso2: string,
-  country: Country | undefined,
-  mode: MapMode,
-  safetyScores: Record<string, number>,
-  featureName: string
-): string {
-  const name = country?.country_name ?? featureName ?? iso2;
-
-  if (mode === "geopolitical") {
-    const status = COUNTRY_CONFLICT_STATUS[iso2] ?? "stable";
-    const color = STATUS_COLORS[status];
-    const label = STATUS_LABELS[status];
-    const zone = CONFLICT_ZONES.find((z) =>
-      z.id.startsWith(iso2.toLowerCase()) ||
-      z.name.toLowerCase().includes((country?.country_name ?? "").toLowerCase().split(" ")[0])
-    );
-    return `<div class="font-medium">${name}</div>
-            <div class="text-xs" style="color:${color}">${label}</div>
-            ${zone ? `<div class="text-xs text-gray-400 mt-1">${zone.description}</div>` : ""}`;
-  }
-
-  if (mode === "safety") {
-    const score = safetyScores[iso2];
-    return score !== undefined
-      ? `<div class="font-medium">${name}</div><div class="text-xs">Safety: ${score}/100 — ${getSafetyLabel(score)}</div>`
-      : `<div class="font-medium">${name}</div><div class="text-xs text-gray-500">No data</div>`;
-  }
-
-  if (mode === "travel") {
-    const advisory = TRAVEL_ADVISORIES[iso2];
-    const level = advisory?.level ?? 1;
-    const closure = AIRSPACE_CLOSURES.find((c) => c.iso2 === iso2);
-    let html = `<div class="font-medium">${name}</div><div class="text-xs">Level ${level}: ${ADVISORY_LABELS[level]}</div>`;
-    if (advisory?.reason) html += `<div class="text-xs text-gray-400">${advisory.reason}</div>`;
-    if (closure) html += `<div class="text-xs mt-1">${closure.severity === "closed" ? "Airspace Closed" : "Airspace Restricted"}: ${closure.reason}</div>`;
-    return html;
-  }
-
-  return `<div class="font-medium">${name}</div>`;
-}
-
-export default function LeafletMapComponent({ countries, onCountryClick, selectedCountry, mode, safetyScores }: LeafletMapProps) {
-  const mapRef = useRef<LeafletMap | null>(null);
-  const geoJsonLayerRef = useRef<LeafletGeoJSON | null>(null);
-  const conflictLayerRef = useRef<LayerGroup | null>(null);
-  const basesLayerRef = useRef<LayerGroup | null>(null);
-  const aircraftLayerRef = useRef<LayerGroup | null>(null);
-  const flightLayerRef = useRef<LayerGroup | null>(null);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  const modeRef = useRef(mode);
-  const safetyRef = useRef(safetyScores);
-  const countriesRef = useRef(countries);
-  const selectedRef = useRef(selectedCountry);
-  modeRef.current = mode;
-  safetyRef.current = safetyScores;
-  countriesRef.current = countries;
-  selectedRef.current = selectedCountry;
-
-  const clearOverlays = useCallback(() => {
-    conflictLayerRef.current?.remove(); conflictLayerRef.current = null;
-    basesLayerRef.current?.remove();    basesLayerRef.current = null;
-    aircraftLayerRef.current?.remove(); aircraftLayerRef.current = null;
-    flightLayerRef.current?.remove();   flightLayerRef.current = null;
-    if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
-  }, []);
-
-  const renderMilAircraft = useCallback(async () => {
-    if (!mapRef.current) return;
-    const L = await import("leaflet");
-    aircraftLayerRef.current?.remove(); aircraftLayerRef.current = null;
-
-    let aircraft: MilitaryAircraft[] = [];
-    try { aircraft = await fetchMilitaryAircraft(); } catch { return; }
-    if (!mapRef.current) return;
-
-    const canvas = L.canvas({ padding: 0.5 });
-    const markers = aircraft.map((a) =>
-      L.circleMarker([a.lat, a.lng], {
-        renderer: canvas, radius: 3,
-        color: "#fbbf24", fillColor: "#fde68a", fillOpacity: 0.9, weight: 1,
-      }).bindTooltip(
-        `<div class="font-medium">${a.callsign}</div>
-         <div class="text-xs" style="color:#fbbf24">Military Aircraft</div>
-         ${a.country ? `<div class="text-xs text-gray-400">${a.country}</div>` : ""}
-         <div class="text-xs">Alt: ${Math.round(a.altitude)}ft &nbsp; ${Math.round(a.speed)}kts</div>`,
-        { className: "geopulse-tooltip", sticky: true }
-      )
-    );
-    aircraftLayerRef.current = L.layerGroup(markers).addTo(mapRef.current);
-  }, []);
-
-  const renderStaticMilitary = useCallback(async () => {
-    if (!mapRef.current) return;
-    const L = await import("leaflet");
-    const map = mapRef.current;
-
-    conflictLayerRef.current?.remove();
-    const zoneMarkers = CONFLICT_ZONES.map((zone) => {
-      const [s, w, n, e] = zone.bounds;
-      return L.rectangle([[s, w], [n, e]], {
-        color: zone.color, weight: 1.5,
-        dashArray: zone.status === "active-war" ? "4 3" : "8 4",
-        fillColor: zone.color,
-        fillOpacity: zone.status === "active-war" ? 0.10 : 0.05,
-      }).bindTooltip(
-        `<div class="font-medium">${zone.name}</div>
-         <div class="text-xs" style="color:${zone.color}">${
-           zone.status === "active-war" ? "Active War" :
-           zone.status === "high-tension" ? "High Tension" : "Occupation"
-         }</div>
-         <div class="text-xs text-gray-400 mt-1">${zone.description}</div>`,
-        { className: "geopulse-tooltip", sticky: true }
-      );
-    });
-    conflictLayerRef.current = L.layerGroup(zoneMarkers).addTo(map);
-
-    basesLayerRef.current?.remove();
-    const baseMarkers = MILITARY_BASES.map((base) => {
-      const color = BASE_COLORS[base.operator];
-      return L.circleMarker([base.lat, base.lng], {
-        radius: 5, color, fillColor: color, fillOpacity: 0.85, weight: 1.5,
-      }).bindTooltip(
-        `<div class="font-medium">${base.name}</div>
-         <div class="text-xs" style="color:${color}">${base.operator} — ${base.type}</div>
-         <div class="text-xs text-gray-400">${base.country}</div>
-         ${base.personnel ? `<div class="text-xs">Personnel: ~${base.personnel}</div>` : ""}`,
-        { className: "geopulse-tooltip", sticky: true }
-      );
-    });
-    basesLayerRef.current = L.layerGroup(baseMarkers).addTo(map);
-  }, []);
-
-  const renderFlights = useCallback(async () => {
-    if (!mapRef.current) return;
-    const L = await import("leaflet");
-    flightLayerRef.current?.remove(); flightLayerRef.current = null;
-
-    let flights: LiveFlight[] = [];
-    try { flights = await fetchLiveFlights(); } catch { return; }
-    if (!mapRef.current) return;
-
-    const canvas = L.canvas({ padding: 0.5 });
-    const markers = flights.map((f) =>
-      L.circleMarker([f.latitude, f.longitude], {
-        renderer: canvas, radius: 1.5,
-        color: "#60a5fa", fillColor: "#93c5fd", fillOpacity: 0.85, weight: 0,
-      }).bindTooltip(
-        `<div class="font-medium">${f.callsign || f.icao24}</div>
-         <div class="text-xs text-gray-400">${f.origin_country}</div>
-         <div class="text-xs">Alt: ${Math.round(f.altitude)}m</div>`,
-        { className: "geopulse-tooltip", sticky: true }
-      )
-    );
-    flightLayerRef.current = L.layerGroup(markers).addTo(mapRef.current);
-  }, []);
-
-  const buildLayer = useCallback(async () => {
-    if (!mapRef.current) return;
-    const L = await import("leaflet");
-    const map = mapRef.current;
-
-    geoJsonLayerRef.current?.remove(); geoJsonLayerRef.current = null;
-    clearOverlays();
-
-    const geojson = await getGeoJson();
-    const currentMode = modeRef.current;
-    const currentSafety = safetyRef.current;
-    const lookup = buildLookup(countriesRef.current);
-
-    const layer = L.geoJSON(geojson, {
-      style: (feature) => {
-        const iso2: string = feature?.properties?.["ISO3166-1-Alpha-2"] ?? "";
-        return getStyle(iso2, lookup, currentMode, currentSafety, selectedRef.current);
-      },
-      onEachFeature: (feature, fl) => {
-        const iso2: string = feature?.properties?.["ISO3166-1-Alpha-2"] ?? "";
-        const featureName: string = feature?.properties?.name ?? iso2;
-
-        fl.on("mouseover", () => {
-          const lkp = buildLookup(countriesRef.current);
-          (fl as unknown as { setStyle: (s: object) => void }).setStyle({ fillOpacity: 0.9 });
-          fl.bindTooltip(
-            getTooltip(iso2, lkp[iso2], modeRef.current, safetyRef.current, featureName),
-            { className: "geopulse-tooltip", sticky: true }
-          ).openTooltip();
-        });
-        fl.on("mouseout", () => {
-          const lkp = buildLookup(countriesRef.current);
-          const s = getStyle(iso2, lkp, modeRef.current, safetyRef.current, selectedRef.current);
-          (fl as unknown as { setStyle: (s: object) => void }).setStyle({ fillOpacity: s.fillOpacity });
-          fl.closeTooltip();
-        });
-        fl.on("click", () => {
-          const c = buildLookup(countriesRef.current)[iso2];
-          if (c) onCountryClick(c);
-        });
-      },
-    });
-
-    layer.addTo(map);
-    geoJsonLayerRef.current = layer;
-
-    if (currentMode === "geopolitical") {
-      await renderStaticMilitary();
-      await renderMilAircraft();
-      intervalRef.current = setInterval(renderMilAircraft, 30_000);
-    } else if (currentMode === "travel") {
-      await renderFlights();
-      intervalRef.current = setInterval(renderFlights, 60_000);
-    }
-  }, [onCountryClick, clearOverlays, renderStaticMilitary, renderMilAircraft, renderFlights]);
+export default function MapClient({ initialCountries, mode }: MapClientProps) {
+  const [countries, setCountries] = useState<Country[]>(initialCountries);
+  const [selectedCountry, setSelectedCountry] = useState<Country | null>(null);
+  const [events, setEvents] = useState<GdeltEvent[]>([]);
+  const [loadingEvents, setLoadingEvents] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [safetyScores, setSafetyScores] = useState<Record<string, number>>({});
+  const [loadingSafety, setLoadingSafety] = useState(false);
 
   useEffect(() => {
-    if (!containerRef.current || mapRef.current) return;
-    import("leaflet").then((L) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      delete (L.Icon.Default.prototype as any)._getIconUrl;
-      const map = L.map(containerRef.current!, {
-        center: [20, 10], zoom: 2.5, minZoom: 2, maxZoom: 8,
-        zoomControl: true, attributionControl: true,
-      });
-      L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png", {
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
-        subdomains: "abcd", maxZoom: 19,
-      }).addTo(map);
-      mapRef.current = map;
-      buildLayer();
-    });
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      mapRef.current?.remove(); mapRef.current = null;
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    fetch("/api/countries")
+      .then((r) => r.json())
+      .then((data) => { if (Array.isArray(data) && data.length > 0) setCountries(data); })
+      .catch(console.error);
   }, []);
 
   useEffect(() => {
-    if (mode === "safety" && Object.keys(safetyScores).length === 0) return;
-    buildLayer();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [countries, mode, safetyScores]);
+    if (mode !== "safety") return;
+    if (Object.keys(safetyScores).length > 0) return;
+    setLoadingSafety(true);
+    getSafetyScores().then(setSafetyScores).finally(() => setLoadingSafety(false));
+  }, [mode, safetyScores]);
 
-  useEffect(() => {
-    if (!geoJsonLayerRef.current) return;
-    const lookup = buildLookup(countries);
-    geoJsonLayerRef.current.eachLayer((fl) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const iso2: string = (fl as any).feature?.properties?.["ISO3166-1-Alpha-2"] ?? "";
-      const s = getStyle(iso2, lookup, mode, safetyScores, selectedCountry);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (fl as any).setStyle(s);
-    });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCountry]);
+  const handleCountryClick = useCallback(async (country: Country) => {
+    setSelectedCountry(country);
+    setSidebarOpen(true);
+    setLoadingEvents(true);
+    setEvents([]);
+    try {
+      const res = await fetch(`/api/events?country_code=${country.country_code}`);
+      if (!res.ok) throw new Error("Failed to fetch events");
+      setEvents(await res.json());
+    } catch { setEvents([]); }
+    finally { setLoadingEvents(false); }
+  }, []);
+
+  const handleClose = useCallback(() => {
+    setSidebarOpen(false);
+    setTimeout(() => { setSelectedCountry(null); setEvents([]); }, 300);
+  }, []);
 
   return (
-    <>
-      <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-      <style>{`
-        .geopulse-tooltip { background: #161b27; border: 1px solid #1e2533; border-radius: 6px; color: #f3f4f6; font-size: 12px; padding: 6px 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); }
-        .geopulse-tooltip::before { display: none; }
-        .leaflet-container { background: #0a0d14; }
-        .leaflet-control-zoom a { background: #161b27 !important; color: #9ca3af !important; border-color: #1e2533 !important; }
-        .leaflet-control-zoom a:hover { background: #1e2533 !important; color: #f3f4f6 !important; }
-      `}</style>
-      <div ref={containerRef} className="w-full h-full" />
-    </>
+    <div className="relative w-full h-full">
+      {loadingSafety && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1001] bg-[#161b27] border border-[#1e2533] rounded-lg px-4 py-2 text-xs text-gray-400 flex items-center gap-2">
+          <div className="animate-spin h-3 w-3 border border-blue-500 border-t-transparent rounded-full" />
+          Loading safety data...
+        </div>
+      )}
+
+      <LeafletMap
+        key={mode}
+        countries={countries}
+        onCountryClick={handleCountryClick}
+        selectedCountry={selectedCountry}
+        mode={mode}
+        safetyScores={safetyScores}
+      />
+
+      <ModeLegend mode={mode} />
+
+      <CountrySidebar
+        country={selectedCountry}
+        events={events}
+        loading={loadingEvents}
+        isOpen={sidebarOpen}
+        onClose={handleClose}
+      />
+    </div>
   );
+}
+
+function ModeLegend({ mode }: { mode: MapMode }) {
+  if (mode === "geopolitical") {
+    return (
+      <div className="absolute bottom-8 left-4 z-[1000] bg-[#161b27]/90 border border-[#1e2533] rounded-lg px-3 py-2.5 text-xs backdrop-blur-sm">
+        <div className="text-gray-500 font-medium mb-1.5 uppercase tracking-wider text-[10px]">Conflict Status</div>
+        {[
+          { color: "#ef4444", label: "Active War" },
+          { color: "#f97316", label: "High Tension" },
+          { color: "#eab308", label: "Occupation / Disputed" },
+          { color: "#a855f7", label: "Heavily Sanctioned" },
+          { color: "#1e2533", label: "Stable", border: "#4b5563" },
+        ].map(({ color, label, border }) => (
+          <div key={label} className="flex items-center gap-2 py-0.5">
+            <span className="w-2.5 h-2.5 rounded-sm inline-block flex-shrink-0"
+              style={{ backgroundColor: color, border: border ? `1px solid ${border}` : undefined }} />
+            <span className="text-gray-300">{label}</span>
+          </div>
+        ))}
+        <div className="border-t border-[#1e2533] mt-2 pt-1.5 space-y-0.5">
+          <div className="text-gray-500 font-medium uppercase tracking-wider text-[10px] mb-1">Overlays</div>
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2 inline-block flex-shrink-0 border border-red-400 border-dashed rounded-sm" />
+            <span className="text-gray-400">Active conflict zone</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full inline-block flex-shrink-0 bg-blue-500" />
+            <span className="text-gray-400">US base</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full inline-block flex-shrink-0 bg-purple-500" />
+            <span className="text-gray-400">NATO base</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full inline-block flex-shrink-0 bg-red-500" />
+            <span className="text-gray-400">Russian base</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full inline-block flex-shrink-0 bg-orange-500" />
+            <span className="text-gray-400">Chinese base</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full inline-block flex-shrink-0 bg-yellow-300" />
+            <span className="text-gray-400">Military aircraft (live)</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (mode === "safety") {
+    return (
+      <div className="absolute bottom-8 left-4 z-[1000] bg-[#161b27]/90 border border-[#1e2533] rounded-lg px-3 py-2.5 text-xs backdrop-blur-sm">
+        <div className="text-gray-500 font-medium mb-1.5 uppercase tracking-wider text-[10px]">Safety Score</div>
+        {[
+          { color: "#22c55e", label: "Very Safe",            range: "80–100" },
+          { color: "#84cc16", label: "Relatively Safe",      range: "60–79" },
+          { color: "#eab308", label: "Moderate Concerns",    range: "40–59" },
+          { color: "#f97316", label: "Significant Concerns", range: "20–39" },
+          { color: "#ef4444", label: "High Risk",            range: "0–19"  },
+        ].map(({ color, label, range }) => (
+          <div key={label} className="flex items-center gap-2 py-0.5">
+            <span className="w-2.5 h-2.5 rounded-full inline-block flex-shrink-0" style={{ backgroundColor: color }} />
+            <span className="text-gray-300">{label}</span>
+            <span className="text-gray-600 ml-auto pl-3">{range}</span>
+          </div>
+        ))}
+        <div className="text-gray-600 mt-1.5 text-[10px]">Source: World Bank Rule of Law</div>
+      </div>
+    );
+  }
+
+  if (mode === "travel") {
+    return (
+      <div className="absolute bottom-8 left-4 z-[1000] bg-[#161b27]/90 border border-[#1e2533] rounded-lg px-3 py-2.5 text-xs backdrop-blur-sm">
+        <div className="text-gray-500 font-medium mb-1.5 uppercase tracking-wider text-[10px]">Travel Advisory</div>
+        {[
+          { color: "#22c55e", label: "Level 1 — Normal" },
+          { color: "#eab308", label: "Level 2 — Increased Caution" },
+          { color: "#f97316", label: "Level 3 — Reconsider Travel" },
+          { color: "#ef4444", label: "Level 4 — Do Not Travel" },
+        ].map(({ color, label }) => (
+          <div key={label} className="flex items-center gap-2 py-0.5">
+            <span className="w-2.5 h-2.5 rounded-full inline-block flex-shrink-0" style={{ backgroundColor: color }} />
+            <span className="text-gray-300">{label}</span>
+          </div>
+        ))}
+        <div className="border-t border-[#1e2533] mt-2 pt-1.5 space-y-0.5">
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2 inline-block flex-shrink-0 border-2 border-red-400 border-dashed rounded-sm" />
+            <span className="text-gray-400">Airspace closed</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2 inline-block flex-shrink-0 border-2 border-orange-400 border-dashed rounded-sm" />
+            <span className="text-gray-400">Airspace restricted</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full inline-block flex-shrink-0 bg-blue-400" />
+            <span className="text-gray-400">Live flights</span>
+          </div>
+        </div>
+        <div className="text-gray-600 mt-1.5 text-[10px]">Source: US State Dept · OpenSky Network</div>
+      </div>
+    );
+  }
+
+  return null;
 }
