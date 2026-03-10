@@ -189,9 +189,10 @@ export default function LeafletMapComponent({ countries, onCountryClick, selecte
     try { aircraft = await fetchMilitaryAircraft(); } catch { return; }
     if (!mapRef.current) return;
 
-    const canvas = L.canvas({ padding: 0.5 });
+    const canvas = L.canvas({ padding: 0.5, pane: "aircraftPane" });
     const markers = aircraft.map((a) =>
       L.circleMarker([a.lat, a.lng], {
+        pane: "aircraftPane",
         renderer: canvas, radius: 3,
         color: "#fbbf24", fillColor: "#fde68a", fillOpacity: 0.9, weight: 1,
       }).bindTooltip(
@@ -214,6 +215,7 @@ export default function LeafletMapComponent({ countries, onCountryClick, selecte
     const zoneMarkers = CONFLICT_ZONES.map((zone) => {
       const [s, w, n, e] = zone.bounds;
       return L.rectangle([[s, w], [n, e]], {
+        pane: "militaryPane",
         color: zone.color, weight: 1.5,
         dashArray: zone.status === "active-war" ? "4 3" : "8 4",
         fillColor: zone.color,
@@ -234,6 +236,7 @@ export default function LeafletMapComponent({ countries, onCountryClick, selecte
     const baseMarkers = MILITARY_BASES.map((base) => {
       const color = BASE_COLORS[base.operator];
       return L.circleMarker([base.lat, base.lng], {
+        pane: "militaryPane",
         radius: 5, color, fillColor: color, fillOpacity: 0.85, weight: 1.5,
       }).bindTooltip(
         `<div class="font-medium">${base.name}</div>
@@ -255,9 +258,10 @@ export default function LeafletMapComponent({ countries, onCountryClick, selecte
     try { flights = await fetchLiveFlights(); } catch { return; }
     if (!mapRef.current) return;
 
-    const canvas = L.canvas({ padding: 0.5 });
+    const canvas = L.canvas({ padding: 0.5, pane: "flightPane" });
     const markers = flights.map((f) =>
       L.circleMarker([f.latitude, f.longitude], {
+        pane: "flightPane",
         renderer: canvas, radius: 1.5,
         color: "#60a5fa", fillColor: "#93c5fd", fillOpacity: 0.85, weight: 0,
       }).bindTooltip(
@@ -339,6 +343,12 @@ export default function LeafletMapComponent({ countries, onCountryClick, selecte
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
         subdomains: "abcd", maxZoom: 19,
       }).addTo(map);
+
+      // Create elevated panes so markers always render above the choropleth
+      map.createPane("militaryPane").style.zIndex = "450";
+      map.createPane("aircraftPane").style.zIndex = "460";
+      map.createPane("flightPane").style.zIndex   = "460";
+
       mapRef.current = map;
       buildLayer();
     });
