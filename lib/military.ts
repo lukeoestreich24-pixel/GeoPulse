@@ -58,7 +58,7 @@ export const STATUS_COLORS: Record<ConflictStatus, string> = {
   "high-tension": "#f97316",
   "occupation":   "#eab308",
   "sanctioned":   "#a855f7",
-  "stable":       "#1e2533",
+  "stable":       "#22c55e",
 };
 
 export const STATUS_FILL_OPACITY: Record<ConflictStatus, number> = {
