@@ -84,7 +84,6 @@ function getStyle(
   const base = { weight: isSelected ? 2 : 0.5, color: isSelected ? "#ffffff" : "#1e2533" };
 
   if (mode === "geopolitical") {
-    // Color by conflict/political stress status
     const status = COUNTRY_CONFLICT_STATUS[iso2] ?? "stable";
     return {
       ...base,
@@ -125,12 +124,10 @@ function getTooltip(
     const status = COUNTRY_CONFLICT_STATUS[iso2] ?? "stable";
     const color = STATUS_COLORS[status];
     const label = STATUS_LABELS[status];
-    // Find any conflict zones overlapping this country
-    const zone = CONFLICT_ZONES.find((z) => {
-      // Simple check — does this iso2 appear in a zone description or name
-      return z.id.startsWith(iso2.toLowerCase()) ||
-        z.name.toLowerCase().includes((country?.country_name ?? "").toLowerCase().split(" ")[0]);
-    });
+    const zone = CONFLICT_ZONES.find((z) =>
+      z.id.startsWith(iso2.toLowerCase()) ||
+      z.name.toLowerCase().includes((country?.country_name ?? "").toLowerCase().split(" ")[0])
+    );
     return `<div class="font-medium">${name}</div>
             <div class="text-xs" style="color:${color}">${label}</div>
             ${zone ? `<div class="text-xs text-gray-400 mt-1">${zone.description}</div>` : ""}`;
@@ -213,7 +210,6 @@ export default function LeafletMapComponent({ countries, onCountryClick, selecte
     const L = await import("leaflet");
     const map = mapRef.current;
 
-    // Conflict zone rectangles
     conflictLayerRef.current?.remove();
     const zoneMarkers = CONFLICT_ZONES.map((zone) => {
       const [s, w, n, e] = zone.bounds;
@@ -234,7 +230,6 @@ export default function LeafletMapComponent({ countries, onCountryClick, selecte
     });
     conflictLayerRef.current = L.layerGroup(zoneMarkers).addTo(map);
 
-    // Military bases
     basesLayerRef.current?.remove();
     const baseMarkers = MILITARY_BASES.map((base) => {
       const color = BASE_COLORS[base.operator];
