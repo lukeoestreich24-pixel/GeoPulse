@@ -32,8 +32,6 @@ export default function MapClient({ initialCountries, mode }: MapClientProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [safetyScores, setSafetyScores] = useState<Record<string, number>>({});
   const [loadingSafety, setLoadingSafety] = useState(false);
-
-  // Tail number search
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResult, setSearchResult] = useState<"found" | "not-found" | null>(null);
   const [committedSearch, setCommittedSearch] = useState("");
@@ -53,7 +51,6 @@ export default function MapClient({ initialCountries, mode }: MapClientProps) {
     getSafetyScores().then(setSafetyScores).finally(() => setLoadingSafety(false));
   }, [mode, safetyScores]);
 
-  // Reset search when leaving travel tab
   useEffect(() => {
     if (mode !== "travel") {
       setSearchQuery("");
@@ -85,7 +82,7 @@ export default function MapClient({ initialCountries, mode }: MapClientProps) {
     const q = searchQuery.trim().toUpperCase();
     if (!q) return;
     setCommittedSearch(q);
-    setSearchResult(null); // reset — LeafletMap will report back
+    setSearchResult(null);
   }, [searchQuery]);
 
   const handleSearchResult = useCallback((found: boolean) => {
@@ -108,7 +105,6 @@ export default function MapClient({ initialCountries, mode }: MapClientProps) {
         </div>
       )}
 
-      {/* Tail number search — travel tab only */}
       {mode === "travel" && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1001] flex flex-col items-center gap-1">
           <form onSubmit={handleSearch} className="flex items-center gap-2 bg-[#161b27] border border-[#1e2533] rounded-lg px-3 py-2 shadow-lg">
@@ -131,10 +127,7 @@ export default function MapClient({ initialCountries, mode }: MapClientProps) {
                 </svg>
               </button>
             )}
-            <button
-              type="submit"
-              className="text-xs bg-blue-600 hover:bg-blue-500 text-white px-2.5 py-1 rounded transition-colors flex-shrink-0"
-            >
+            <button type="submit" className="text-xs bg-blue-600 hover:bg-blue-500 text-white px-2.5 py-1 rounded transition-colors flex-shrink-0">
               Find
             </button>
           </form>
